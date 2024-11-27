@@ -1,14 +1,15 @@
 package main
 
 import (
-	"gofr.dev/pkg/gofr"
-	"gofr.dev/pkg/gofr/logging"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"gofr.dev/pkg/gofr"
+	"gofr.dev/pkg/gofr/logging"
 )
 
 func main() {
@@ -22,7 +23,7 @@ func main() {
 			ok, _ := regexp.MatchString(`\.\S+$`, r.URL.Path)
 
 			if r.URL.Path != "/" && !ok {
-				r.URL.Path = r.URL.Path + ".html"
+				r.URL.Path += ".html"
 			}
 
 			_, ok = files[r.URL.Path]
@@ -52,8 +53,9 @@ func createListOfFiles(staticDirPath string, logger logging.Logger) map[string]b
 		return files
 	}
 
-	err = filepath.Walk(staticDirPath, func(path string, info fs.FileInfo, err error) error {
+	err = filepath.Walk(staticDirPath, func(path string, info fs.FileInfo, _ error) error {
 		after, _ := strings.CutPrefix(path, "website")
+
 		if !info.IsDir() {
 			files[after] = true
 		}
