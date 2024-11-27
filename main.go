@@ -4,6 +4,7 @@ import (
 	"gofr.dev/pkg/gofr"
 	"io/fs"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -12,7 +13,7 @@ import (
 func main() {
 	app := gofr.New()
 
-	files := createListOfFiles()
+	files := createListOfFiles(app.Config.Get("STATIC_DIR_PATH"))
 
 	app.UseMiddleware(func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,12 +39,17 @@ func main() {
 	app.Run()
 }
 
-func createListOfFiles() map[string]bool {
+func createListOfFiles(staticDirPath string) map[string]bool {
 	files := make(map[string]bool)
 
 	files["/"] = true
 
-	filepath.Walk("./website", func(path string, info fs.FileInfo, err error) error {
+	_, err := os.Stat(staticDirPath)
+	if err != nil {
+		return files
+	}
+
+	filepath.Walk(staticDirPath, func(path string, info fs.FileInfo, err error) error {
 		after, _ := strings.CutPrefix(path, "website")
 		if !info.IsDir() {
 			files[after] = true
