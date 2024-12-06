@@ -38,7 +38,6 @@ func TestServer(t *testing.T) {
 
 	// Set the environment variable for the static file path
 	t.Setenv("STATIC_FILE_PATH", tempDir)
-	t.Setenv("HTTP_PORT", "1010")
 
 	go main()
 
@@ -56,7 +55,7 @@ func TestServer(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		resp, err := http.Get("http://localhost:1010/" + test.path)
+		resp, err := http.Get("http://localhost:8000" + test.path)
 		if err != nil {
 			t.Fatalf("Failed to make GET request: %v", err)
 		}
