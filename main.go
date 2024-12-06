@@ -29,6 +29,8 @@ func main() {
 				r.URL.Path = "/404.html"
 				w.WriteHeader(http.StatusNotFound)
 				filePath = filepath.Join(staticFilePath, "404.html")
+
+				return
 			}
 
 			http.ServeFile(w, r, filePath)
