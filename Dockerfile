@@ -13,3 +13,4 @@ RUN apk add --no-cache tzdata ca-certificates
 COPY --from=build /app/main /main
 COPY --from=build /src/configs /configs
 
+CMD ["/main"]
