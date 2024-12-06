@@ -1,23 +1,19 @@
 package main
 
 import (
-	"io/fs"
+	"gofr.dev/pkg/gofr"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
-
-	"gofr.dev/pkg/gofr"
-	"gofr.dev/pkg/gofr/logging"
 )
 
-const staticFilePath = `./website`
+const defaultStaticFilePath = `./static`
 
 func main() {
 	app := gofr.New()
 
-	files := createListOfFiles(app.Logger())
+	staticFilePath := app.Config.GetOrDefault("STATIC_FILE_PATH", defaultStaticFilePath)
 
 	app.UseMiddleware(func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,53 +24,18 @@ func main() {
 				r.URL.Path += ".html"
 			}
 
-			_, ok = files[r.URL.Path]
-
-			if !ok {
+			filePath := filepath.Join(staticFilePath, r.URL.Path)
+			if _, err := os.Stat(filePath); os.IsNotExist(err) {
 				r.URL.Path = "/404.html"
+				w.WriteHeader(http.StatusNotFound)
+				filePath = filepath.Join(staticFilePath, "404.html")
 			}
 
-			handler.ServeHTTP(w, r)
+			http.ServeFile(w, r, filePath)
 		})
 	})
 
 	app.AddStaticFiles("/", staticFilePath)
 
 	app.Run()
-}
-
-func createListOfFiles(logger logging.Logger) map[string]bool {
-	files := make(map[string]bool)
-
-	files["/"] = true
-
-	_, err := os.Stat(staticFilePath)
-	if err != nil {
-		logger.Fatalf("Error while reading static files directory %v", err)
-
-		return files
-	}
-
-	err = filepath.Walk(staticFilePath, func(path string, info fs.FileInfo, _ error) error {
-		after, _ := strings.CutPrefix(path, "website")
-
-		if !info.IsDir() {
-			files[after] = true
-		}
-
-		return nil
-	})
-	if err != nil {
-		logger.Errorf("Error while walking through static files directory %v", err)
-
-		return files
-	}
-
-	logger.Infof("File reading successful")
-
-	for k, _ := range files {
-		logger.Infof("File: %v", k)
-	}
-
-	return files
 }
