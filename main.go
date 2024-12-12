@@ -13,7 +13,7 @@ const defaultStaticFilePath = `./static`
 func main() {
 	app := gofr.New()
 
-	staticFilePath := app.Config.GetOrDefault("STATIC_FILE_PATH", defaultStaticFilePath)
+	staticFilePath := app.Config.GetOrDefault("STATIC_DIR_PATH", defaultStaticFilePath)
 
 	app.UseMiddleware(func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1,18 +1,15 @@
 # Static Server
 
-A simple and efficient solution for serving static files. This server can be easily deployed via Docker, and it's optimized for serving static websites.
+A simple and efficient solution for serving static files.
 
 ## Features
 
-- **Easy to use**: Just place your static files in the `website` directory, and the server takes care of the rest.
+- **Easy to use**: Just place your static files in the `static` directory, and the server takes care of the rest.
 - **Dockerized**: Easily deployable as a Docker container.
 - **Lightweight**: Minimal dependencies for optimal performance.
 - **Configurable**: You can easily configure the server or extend it based on your needs.
-
-## Requirements
-
-To use this static server, you need the following:
-- Docker installed on your system.
+  - The server serves files from the `static` directory by default, but you can change this by setting the `STATIC_DIR_PATH` environment variable.
+  - Support all the confgs of the gofr framework - https://gofr.dev
 
 ## Usage
 
@@ -30,7 +27,7 @@ FROM zopdev/static-server:latest
 # Copy static files into the container
 # The 'COPY' directive moves your static files (in this case, located at '/app/out') into the '/website' directory
 # which is where the static server expects to find the files to serve
-COPY /app/out /website
+COPY /app/out /static
 
 # Expose the port on which the server will run
 # By default, the server listens on port 8000, so we expose that port to allow access from outside the container
@@ -78,7 +75,6 @@ Your static files will be served, and the root (`/`) will typically display your
 
 ## Notes
 
-- The static server is designed to handle a large number of requests efficiently. However, if you have special requirements (such as caching or routing), you may need to customize the server or use additional reverse proxies (like Nginx).
 - The server serves all files in the `website` directory, so make sure to avoid any sensitive files or configuration details in that directory.
 
 ## License
