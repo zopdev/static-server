@@ -37,7 +37,7 @@ func TestServer(t *testing.T) {
 	}
 
 	// Set the environment variable for the static file path
-	t.Setenv("STATIC_FILE_PATH", tempDir)
+	t.Setenv("STATIC_DIR_PATH", tempDir)
 
 	go main()
 
