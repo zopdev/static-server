@@ -1,7 +1,7 @@
 package main
 
 import (
-	"io/ioutil"
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,11 +11,8 @@ import (
 
 func TestServer(t *testing.T) {
 	// Create a temporary directory
-	tempDir, err := ioutil.TempDir("", "static")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	//nolint:staticcheck // Ignore as we are testing the server
+	tempDir := os.TempDir()
 
 	// Create necessary files
 	files := []struct {
@@ -28,16 +25,17 @@ func TestServer(t *testing.T) {
 
 	for _, file := range files {
 		filePath := filepath.Join(tempDir, file.name)
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(filePath), 0600); err != nil {
 			t.Fatalf("Failed to create dir for file %s: %v", file.name, err)
 		}
-		if err := ioutil.WriteFile(filePath, []byte(file.content), 0644); err != nil {
+
+		if err := os.WriteFile(filePath, []byte(file.content), 0600); err != nil {
 			t.Fatalf("Failed to write file %s: %v", file.name, err)
 		}
 	}
 
 	// Set the environment variable for the static file path
-	t.Setenv("STATIC_FILE_PATH", tempDir)
+	t.Setenv("STATIC_DIR_PATH", tempDir)
 
 	go main()
 
@@ -55,15 +53,25 @@ func TestServer(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		resp, err := http.Get("http://localhost:8000" + test.path)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://localhost:8000"+test.path, http.NoBody)
 		if err != nil {
-			t.Fatalf("Failed to make GET request: %v", err)
+			t.Fatalf("Failed to create request: %v", err)
 		}
 
-		defer resp.Body.Close()
+		client := &http.Client{}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Failed to perform request: %v", err)
+		}
 
 		if resp.StatusCode != test.statusCode {
 			t.Errorf("Expected status code %v, got %v for path %v", test.statusCode, resp.StatusCode, test.path)
 		}
+
+		resp.Body.Close()
 	}
+
+	//nolint:staticcheck // Ignore as we are testing the server
+	os.RemoveAll(tempDir)
 }
