@@ -10,11 +10,13 @@ import (
 )
 
 const defaultStaticFilePath = `./static`
+const defaultPathFileNotFound = "/404.html"
 
 func main() {
 	app := gofr.New()
 
 	staticFilePath := app.Config.GetOrDefault("STATIC_DIR_PATH", defaultStaticFilePath)
+	fileNotFoundPath := app.Config.GetOrDefault("FILE_NOT_FOUND_PATH", defaultPathFileNotFound)
 
 	app.UseMiddleware(func(_ http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +37,7 @@ func main() {
 
 			filePath = filepath.Join(staticFilePath, r.URL.Path)
 			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				r.URL.Path = "/404.html"
+				r.URL.Path = fileNotFoundPath
 
 				w.WriteHeader(http.StatusNotFound)
 
