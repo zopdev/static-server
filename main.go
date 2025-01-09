@@ -1,80 +1,56 @@
 package main
 
 import (
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 
 	"gofr.dev/pkg/gofr"
-	"gofr.dev/pkg/gofr/logging"
 )
 
-const staticFilePath = `./website`
+const defaultStaticFilePath = `./static`
+const indexHTML = "/index.html"
+const htmlExtension = ".html"
+const rootPath = "/"
 
 func main() {
 	app := gofr.New()
 
-	files := createListOfFiles(app.Logger())
+	staticFilePath := app.Config.GetOrDefault("STATIC_DIR_PATH", defaultStaticFilePath)
 
-	app.UseMiddleware(func(handler http.Handler) http.Handler {
+	app.UseMiddleware(func(_ http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			filePath := filepath.Join(staticFilePath, r.URL.Path)
+
 			// check if the path has a file extension
-			ok, _ := regexp.MatchString(`\.\S+$`, r.URL.Path)
+			ok, _ := regexp.MatchString(`\.\S+$`, filePath)
 
-			if r.URL.Path != "/" && !ok {
-				r.URL.Path += ".html"
+			if r.URL.Path == rootPath {
+				filePath += indexHTML
+			} else if !ok {
+				if stat, err := os.Stat(filePath); err == nil && stat.IsDir() {
+					filePath += indexHTML
+				} else {
+					filePath += htmlExtension
+				}
 			}
 
-			_, ok = files[r.URL.Path]
+			if _, err := os.Stat(filePath); os.IsNotExist(err) {
+				w.WriteHeader(http.StatusNotFound)
 
-			if !ok {
-				r.URL.Path = "/404.html"
+				filePath = filepath.Join(staticFilePath, "404.html")
+
+				http.ServeFile(w, r, filePath)
+
+				return
 			}
 
-			handler.ServeHTTP(w, r)
+			http.ServeFile(w, r, filePath)
 		})
 	})
 
 	app.AddStaticFiles("/", staticFilePath)
 
 	app.Run()
-}
-
-func createListOfFiles(logger logging.Logger) map[string]bool {
-	files := make(map[string]bool)
-
-	files["/"] = true
-
-	_, err := os.Stat(staticFilePath)
-	if err != nil {
-		logger.Fatalf("Error while reading static files directory %v", err)
-
-		return files
-	}
-
-	err = filepath.Walk(staticFilePath, func(path string, info fs.FileInfo, _ error) error {
-		after, _ := strings.CutPrefix(path, "website")
-
-		if !info.IsDir() {
-			files[after] = true
-		}
-
-		return nil
-	})
-	if err != nil {
-		logger.Errorf("Error while walking through static files directory %v", err)
-
-		return files
-	}
-
-	logger.Infof("File reading successful")
-
-	for k, _ := range files {
-		logger.Infof("File: %v", k)
-	}
-
-	return files
 }
