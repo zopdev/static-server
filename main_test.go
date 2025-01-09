@@ -47,7 +47,8 @@ func TestServer(t *testing.T) {
 	}{
 		{"/", http.StatusOK},
 		{"/index", http.StatusOK},
-		{"/index/", http.StatusNotFound},
+		{"/index/", http.StatusOK},
+		{tempDir + "/index.html", http.StatusNotFound},
 		{"/index.html", http.StatusOK},
 		{"/nonexistent", http.StatusNotFound},
 	}
