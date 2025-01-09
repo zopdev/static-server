@@ -18,14 +18,22 @@ func main() {
 
 	app.UseMiddleware(func(_ http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// check if the path has a file extension
-			ok, _ := regexp.MatchString(`\.\S+$`, r.URL.Path)
+			filePath := filepath.Join(staticFilePath, r.URL.Path)
 
-			if r.URL.Path != "/" && !ok {
-				r.URL.Path += ".html"
+			// check if the path has a file extension
+			ok, _ := regexp.MatchString(`\.\S+$`, filePath)
+
+			if r.URL.Path == "/" {
+				filePath = "/index.html"
+			} else if !ok {
+				if stat, err := os.Stat(filePath); err == nil && stat.IsDir() {
+					filePath = filepath.Join(r.URL.Path, "/index.html")
+				} else {
+					r.URL.Path += ".html"
+				}
 			}
 
-			filePath := filepath.Join(staticFilePath, r.URL.Path)
+			filePath = filepath.Join(staticFilePath, r.URL.Path)
 			if _, err := os.Stat(filePath); os.IsNotExist(err) {
 				r.URL.Path = "/404.html"
 
