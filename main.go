@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"gofr.dev/pkg/gofr"
 )
@@ -19,8 +20,14 @@ func main() {
 
 	staticFilePath := app.Config.GetOrDefault("STATIC_DIR_PATH", defaultStaticFilePath)
 
-	app.UseMiddleware(func(_ http.Handler) http.Handler {
+	app.UseMiddleware(func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Path, "/.well-known/") {
+				h.ServeHTTP(w, r)
+
+				return
+			}
+
 			filePath := filepath.Join(staticFilePath, r.URL.Path)
 
 			// check if the path has a file extension
