@@ -36,12 +36,10 @@ func main() {
 			if r.URL.Path == rootPath {
 				filePath += indexHTML
 			} else if !ok {
-				if stat, err := os.Stat(filePath); err == nil && stat.IsDir() {
-					if _, err = os.Stat(filePath + ".html"); os.IsNotExist(err) {
-						filePath += indexHTML
-					} else {
-						filePath += htmlExtension
-					}
+				if _, err := os.Stat(filePath + ".html"); err == nil {
+					filePath += htmlExtension
+				} else if stat, err := os.Stat(filePath); err == nil && stat.IsDir() {
+					filePath += indexHTML
 				}
 			}
 
