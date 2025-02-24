@@ -14,6 +14,12 @@ func TestServer(t *testing.T) {
 	//nolint:staticcheck // Ignore as we are testing the server
 	tempDir := os.TempDir()
 
+	// Create an "index" directory
+	indexDirPath := filepath.Join(tempDir, "docs")
+	if err := os.MkdirAll(indexDirPath, 0600); err != nil {
+		t.Fatalf("Failed to create directory %s: %v", indexDirPath, err)
+	}
+
 	// Create necessary files
 	files := []struct {
 		name    string
@@ -21,6 +27,7 @@ func TestServer(t *testing.T) {
 	}{
 		{"/index.html", "<html><body>Index</body></html>"},
 		{"/404.html", "<html><body>404 Not Found</body></html>"},
+		{"/docs.html", "<html><body>Index</body></html>"},
 	}
 
 	for _, file := range files {
@@ -46,6 +53,7 @@ func TestServer(t *testing.T) {
 		statusCode int
 	}{
 		{"/", http.StatusOK},
+		{"/docs", http.StatusOK},
 		{"/index", http.StatusOK},
 		{"/index/", http.StatusOK},
 		{tempDir + "/index.html", http.StatusNotFound},
