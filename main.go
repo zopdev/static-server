@@ -37,9 +37,11 @@ func main() {
 				filePath += indexHTML
 			} else if !ok {
 				if stat, err := os.Stat(filePath); err == nil && stat.IsDir() {
-					filePath += indexHTML
-				} else {
-					filePath += htmlExtension
+					if _, err = os.Stat(filePath + ".html"); os.IsNotExist(err) {
+						filePath += indexHTML
+					} else {
+						filePath += htmlExtension
+					}
 				}
 			}
 
