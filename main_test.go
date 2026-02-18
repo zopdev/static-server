@@ -83,3 +83,94 @@ func TestServer(t *testing.T) {
 
 	_ = os.RemoveAll(tempDir) //nolint:staticcheck // Intentionally removing test temp directory
 }
+
+func TestSanitizePath(t *testing.T) {
+	// Create a temporary directory to use as static path
+	staticDir, err := os.MkdirTemp("", "static-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	defer func() {
+		_ = os.RemoveAll(staticDir)
+	}()
+
+	tests := []struct {
+		name         string
+		requestPath  string
+		shouldPass   bool
+		expectedPath string // expected suffix after staticDir
+	}{
+		// Valid paths - should pass and return correct path
+		{"root path", "/", true, "/"},
+		{"simple file", "/index.html", true, "/index.html"},
+		{"nested path", "/docs/readme.md", true, "/docs/readme.md"},
+		{"path with dots in filename", "/file.name.txt", true, "/file.name.txt"},
+
+		// Path traversal attempts - should be neutralized to safe paths
+		// The filepath.Clean normalizes these before joining, keeping them within staticDir
+		{"parent directory normalized", "/..", true, "/"},
+		{"parent with slash normalized", "/../", true, "/"},
+		{"traverse attempt normalized", "/../etc/passwd", true, "/etc/passwd"},
+		{"multiple traversal normalized", "/../../../etc/passwd", true, "/etc/passwd"},
+		{"traverse from subdir normalized", "/docs/../../../etc/passwd", true, "/etc/passwd"},
+		{"mixed traversal normalized", "/docs/../../secret", true, "/secret"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := sanitizePath(staticDir, tt.requestPath)
+			if ok != tt.shouldPass {
+				t.Errorf("sanitizePath(%q, %q) ok = %v, want %v", staticDir, tt.requestPath, ok, tt.shouldPass)
+			}
+
+			if ok && tt.expectedPath != "" {
+				expectedFull := filepath.Join(staticDir, tt.expectedPath)
+				if result != expectedFull {
+					t.Errorf("sanitizePath(%q, %q) = %q, want %q", staticDir, tt.requestPath, result, expectedFull)
+				}
+			}
+		})
+	}
+}
+
+func TestSanitizePathPreventsEscape(t *testing.T) {
+	// This test verifies that the sanitized path is ALWAYS within the static directory
+	staticDir, err := os.MkdirTemp("", "static-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	defer func() {
+		_ = os.RemoveAll(staticDir)
+	}()
+
+	absStaticDir, _ := filepath.Abs(staticDir)
+
+	// Various attack vectors that could potentially escape the directory
+	attackPaths := []string{
+		"/../../../etc/passwd",
+		"/..\\..\\..\\etc\\passwd",
+		"/../" + staticDir + "/../etc/passwd",
+		"/./../../etc/passwd",
+		"/%2e%2e/%2e%2e/etc/passwd",
+		"/docs/../../../../../../../etc/passwd",
+	}
+
+	for _, attackPath := range attackPaths {
+		t.Run(attackPath, func(t *testing.T) {
+			result, ok := sanitizePath(staticDir, attackPath)
+			if !ok {
+				// If it failed validation, that's also acceptable
+				return
+			}
+
+			// If it passed, verify the result is within staticDir
+			absResult, _ := filepath.Abs(result)
+			if len(absResult) < len(absStaticDir) || absResult[:len(absStaticDir)] != absStaticDir {
+				t.Errorf("Path escaped static directory: sanitizePath(%q, %q) = %q (not within %q)",
+					staticDir, attackPath, absResult, absStaticDir)
+			}
+		})
+	}
+}
