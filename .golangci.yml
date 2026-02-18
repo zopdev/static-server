@@ -139,3 +139,9 @@ linters:
           - mnd
           - dupl
           - goconst
+          - gosec # G704 SSRF false positive in test code
+      # G703 path traversal - paths are sanitized via sanitizePath before os.Stat calls
+      - path: main\.go
+        text: "G703:"
+        linters:
+          - gosec

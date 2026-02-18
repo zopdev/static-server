@@ -34,6 +34,7 @@ func sanitizePath(staticFilePath, requestPath string) (string, bool) {
 }
 
 // resolveFilePath determines the actual file path to serve based on the request.
+// filePath must be pre-sanitized via sanitizePath before calling this function.
 func resolveFilePath(filePath, requestPath string) string {
 	// check if the path has a file extension
 	ok, _ := regexp.MatchString(`\.\S+$`, filePath)
