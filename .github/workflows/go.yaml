@@ -47,20 +47,23 @@ jobs:
       packages: write
 
     steps:
-      - name: Validate Docker configuration
+      - name: Check Docker configuration
+        id: docker-config
         run: |
+          SKIP_DOCKER="false"
           if [ -z "${{ vars.DOCKER_USERNAME }}" ]; then
-            echo "::error::DOCKER_USERNAME variable is not set"
-            exit 1
+            echo "::warning::DOCKER_USERNAME variable is not set - skipping Docker push"
+            SKIP_DOCKER="true"
           fi
           if [ -z "${{ vars.DOCKER_REGISTRY_TARGET }}" ]; then
-            echo "::error::DOCKER_REGISTRY_TARGET variable is not set"
-            exit 1
+            echo "::warning::DOCKER_REGISTRY_TARGET variable is not set - skipping Docker push"
+            SKIP_DOCKER="true"
           fi
           if [ -z "${{ secrets.DOCKER_PASSWORD }}" ]; then
-            echo "::error::DOCKER_PASSWORD secret is not set"
-            exit 1
+            echo "::warning::DOCKER_PASSWORD secret is not set - skipping Docker push"
+            SKIP_DOCKER="true"
           fi
+          echo "skip=$SKIP_DOCKER" >> $GITHUB_OUTPUT
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -78,12 +81,14 @@ jobs:
         run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
 
       - name: Log in to Docker Hub
+        if: steps.docker-config.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and push Docker image
+        if: steps.docker-config.outputs.skip != 'true'
         uses: docker/build-push-action@v4
         with:
           push: true
