@@ -52,8 +52,8 @@ jobs:
             echo "::warning::DOCKER_REGISTRY_TARGET variable is not set - skipping Docker push"
             exit 0
           fi
-          if [ -z "${{ secrets.DOCKER_PASSWORD }}" ]; then
-            echo "::warning::DOCKER_PASSWORD secret is not set - skipping Docker push"
+          if [ -z "${{ secrets.DOCKER_HUB_PAT }}" ]; then
+            echo "::warning::DOCKER_HUB_PAT secret is not set - skipping Docker push"
             exit 0
           fi
           echo "configured=true" >> $GITHUB_OUTPUT
@@ -74,7 +74,7 @@ jobs:
       - uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          password: ${{ secrets.DOCKER_HUB_PAT }}
 
       - name: Extract Release Tag
         run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
