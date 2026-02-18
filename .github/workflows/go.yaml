@@ -34,16 +34,15 @@ jobs:
           version: v2.10.1
           args: --timeout 9m0s
 
-  release_package:
+  check_docker_config:
     if: ${{ startsWith(github.ref, 'refs/tags/v')}}
-    needs: [test_and_build,code_quality]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    name: Check Docker Config
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
     steps:
       - name: Check Docker configuration
-        id: docker-config
+        id: check
         run: |
           if [ -z "${{ vars.DOCKER_USERNAME }}" ]; then
             echo "::warning::DOCKER_USERNAME variable is not set - skipping Docker push"
@@ -59,24 +58,28 @@ jobs:
           fi
           echo "configured=true" >> $GITHUB_OUTPUT
 
+  release_package:
+    if: ${{ needs.check_docker_config.outputs.configured == 'true' }}
+    needs: [test_and_build, code_quality, check_docker_config]
+    runs-on: ubuntu-latest
+    name: Release Package
+    permissions:
+      contents: read
+      packages: write
+    steps:
       - uses: actions/checkout@v4
-        if: steps.docker-config.outputs.configured == 'true'
 
       - uses: docker/setup-buildx-action@v3
-        if: steps.docker-config.outputs.configured == 'true'
 
       - uses: docker/login-action@v3
-        if: steps.docker-config.outputs.configured == 'true'
         with:
           username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Extract Release Tag
-        if: steps.docker-config.outputs.configured == 'true'
         run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
 
       - uses: docker/build-push-action@v4
-        if: steps.docker-config.outputs.configured == 'true'
         with:
           push: true
           context: .
