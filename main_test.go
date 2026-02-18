@@ -78,9 +78,8 @@ func TestServer(t *testing.T) {
 			t.Errorf("Expected status code %v, got %v for path %v", test.statusCode, resp.StatusCode, test.path)
 		}
 
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
-	//nolint:staticcheck // Ignore as we are testing the server
-	os.RemoveAll(tempDir)
+	_ = os.RemoveAll(tempDir) //nolint:staticcheck // Intentionally removing test temp directory
 }
