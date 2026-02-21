@@ -90,4 +90,3 @@ jobs:
           cache-to: type=gha,mode=max
           tags: |
             ${{ vars.DOCKER_REGISTRY_TARGET }}:${{ env.RELEASE_VERSION }}
-            ${{ vars.DOCKER_REGISTRY_TARGET }}:latest
