@@ -22,7 +22,7 @@ To deploy the server, you need to build a Docker image using the provided `Docke
 ```dockerfile
 # Use the official static-server image as the base image
 # This will pull the prebuilt version of the static-server to run your static website
-FROM zopdev/static-server:v0.0.6
+FROM zopdev/static-server:v0.0.7
 
 # Copy static files into the container
 # The 'COPY' directive moves your static files (in this case, located at '/app/out') into the '/website' directory
