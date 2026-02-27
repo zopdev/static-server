@@ -1,5 +1,5 @@
-# Build stage
-FROM golang:1.26 AS build
+# Build stage - runs on native platform, cross-compiles to target
+FROM --platform=$BUILDPLATFORM golang:1.26 AS build
 
 WORKDIR /src
 
