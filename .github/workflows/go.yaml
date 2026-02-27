@@ -84,6 +84,7 @@ jobs:
           push: true
           context: .
           file: Dockerfile
+          platforms: linux/amd64,linux/arm64
           provenance: true
           sbom: true
           cache-from: type=gha

@@ -9,7 +9,9 @@ RUN go mod download
 
 # Copy source code (this layer changes frequently)
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /app/main main.go
+
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /app/main main.go
 
 # Final stage - distroless
 FROM gcr.io/distroless/static-debian12
