@@ -7,7 +7,91 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"gofr.dev/pkg/gofr/config"
 )
+
+func TestHydrateConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		vars     map[string]string
+		expected string
+		wantErr  bool
+	}{
+		{
+			name:     "hydrates config in-place",
+			template: `{"a":"${A}","b":"${B}"}`,
+			vars:     map[string]string{"A": "1", "B": "2"},
+			expected: `{"a":"1","b":"2"}`,
+			wantErr:  false,
+		},
+		{
+			name:    "no-op when config path empty",
+			vars:    map[string]string{},
+			wantErr: false,
+		},
+		{
+			name:     "extra config vars not in template",
+			template: `{"a":"${A}"}`,
+			vars:     map[string]string{"A": "1", "EXTRA": "x"},
+			expected: `{"a":"1"}`,
+			wantErr:  false,
+		},
+		{
+			name:     "some template vars missing",
+			template: `{"a":"${A}","b":"${MISSING}"}`,
+			vars:     map[string]string{"A": "1"},
+			expected: `{"a":"1","b":""}`,
+			wantErr:  true,
+		},
+		{
+			name:     "all template vars missing",
+			template: `{"a":"${X}","b":"${Y}"}`,
+			vars:     map[string]string{},
+			expected: `{"a":"","b":""}`,
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vars := make(map[string]string)
+			for k, v := range tt.vars {
+				vars[k] = v
+			}
+
+			if tt.template != "" {
+				dir := t.TempDir()
+				configFile := filepath.Join(dir, "config.json")
+				if err := os.WriteFile(configFile, []byte(tt.template), 0644); err != nil {
+					t.Fatalf("failed to write config: %v", err)
+				}
+				vars["CONFIG_FILE_PATH"] = configFile
+			}
+
+			cfg := config.NewMockConfig(vars)
+			err := hydrateConfig(cfg)
+
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.template != "" {
+				output, err := os.ReadFile(vars["CONFIG_FILE_PATH"])
+				if err != nil {
+					t.Fatalf("failed to read config: %v", err)
+				}
+				if string(output) != tt.expected {
+					t.Errorf("expected %q, got %q", tt.expected, string(output))
+				}
+			}
+		})
+	}
+}
 
 func TestServer(t *testing.T) {
 	// Create a temporary directory
