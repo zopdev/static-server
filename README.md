@@ -9,7 +9,7 @@ A simple and efficient solution for serving static files.
 - **Lightweight**: Minimal dependencies for optimal performance.
 - **Configurable**: You can easily configure the server or extend it based on your needs.
   - The server serves files from the `static` directory by default, but you can change this by setting the `STATIC_DIR_PATH` environment variable.
-  - Support all the confgs of the gofr framework - https://gofr.dev
+  - Support all the configs of the gofr framework - https://gofr.dev
 
 ## Config File Hydration
 
@@ -55,20 +55,17 @@ To deploy the server, you need to build a Docker image using the provided `Docke
 FROM zopdev/static-server:v0.0.8
 
 # Copy static files into the container
-# The 'COPY' directive moves your static files (in this case, located at '/app/out') into the '/website' directory
+# The 'COPY' directive moves your static files (in this case, located at '/app/out') into the '/static' directory
 # which is where the static server expects to find the files to serve
 COPY /app/out /static
 
 # Set the path to the config file for environment variable hydration at startup
 ENV CONFIG_FILE_PATH=/static/config.json
 
-# Expose the port on which the server will run
-# By default, the server listens on port 8000, so we expose that port to allow access from outside the container
-EXPOSE 8000
+# The server listens on port 8000 by default; set HTTP_PORT to change it
 
 # Define the command to run the server
-# The static server is started with the '/main' binary included in the image, which will start serving
-# the files from the '/website' directory on port 8000
+# The static server is started with the '/main' binary included in the image
 CMD ["/main"]
 ```
 
@@ -108,7 +105,7 @@ Your static files will be served, and the root (`/`) will typically display your
 
 ## Notes
 
-- The server serves all files in the `website` directory, so make sure to avoid any sensitive files or configuration details in that directory.
+- The server serves all files in the `static` directory, so make sure to avoid any sensitive files or configuration details in that directory.
 
 ## License
 
