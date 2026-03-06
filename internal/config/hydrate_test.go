@@ -54,19 +54,19 @@ func TestConfig(t *testing.T) {
 			template: `{"a":"${A}","b":"${MISSING}"}`,
 			vars:     map[string]string{"A": "1"},
 			expected: `{"a":"1","b":""}`,
-			wantErr:  ErrMissingVars,
+			wantErr:  errMissingVars,
 		},
 		{
 			name:     "all vars missing",
 			template: `{"a":"${X}","b":"${Y}"}`,
 			vars:     map[string]string{},
 			expected: `{"a":"","b":""}`,
-			wantErr:  ErrMissingVars,
+			wantErr:  errMissingVars,
 		},
 		{
 			name:    "invalid config path",
 			vars:    map[string]string{"CONFIG_FILE_PATH": "/no/such/file"},
-			wantErr: ErrReadConfig,
+			wantErr: errReadConfig,
 		},
 	}
 
@@ -109,5 +109,5 @@ func TestHydrateFile_WriteError(t *testing.T) {
 	}
 
 	err = HydrateFile(fs, config.NewMockConfig(vars))
-	require.ErrorIs(t, err, ErrWriteConfig)
+	require.ErrorIs(t, err, errWriteConfig)
 }

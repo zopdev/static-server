@@ -13,10 +13,9 @@ import (
 )
 
 var (
-	ErrMissingVars = errors.New("missing config variables")
-	ErrReadConfig  = errors.New("failed to read config file")
-	ErrWriteConfig = errors.New("failed to write config file")
-	ErrMissingFile = errors.New("file not found")
+	errMissingVars = errors.New("missing config variables")
+	errReadConfig  = errors.New("failed to read config file")
+	errWriteConfig = errors.New("failed to write config file")
 
 	envVarRe = regexp.MustCompile(`\$\{(\w+)\}`)
 )
@@ -31,12 +30,12 @@ func HydrateFile(fs file.FileSystem, cfg config.Config) error {
 
 	configFile, err := fs.Open(filepath.Clean(configPath))
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrReadConfig, err)
+		return fmt.Errorf("%w: %w", errReadConfig, err)
 	}
 
 	content, err := io.ReadAll(configFile)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrReadConfig, err)
+		return fmt.Errorf("%w: %w", errReadConfig, err)
 	}
 
 	_ = configFile.Close()
@@ -46,11 +45,11 @@ func HydrateFile(fs file.FileSystem, cfg config.Config) error {
 
 	wf, err := fs.OpenFile(configPath, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrWriteConfig, err)
+		return fmt.Errorf("%w: %w", errWriteConfig, err)
 	}
 
 	if _, err = wf.Write([]byte(result)); err != nil {
-		return fmt.Errorf("%w: %w", ErrWriteConfig, err)
+		return fmt.Errorf("%w: %w", errWriteConfig, err)
 	}
 
 	// Detect vars that were missing (replaced with empty string)
@@ -65,7 +64,7 @@ func HydrateFile(fs file.FileSystem, cfg config.Config) error {
 	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("%w: %v", ErrMissingVars, missing)
+		return fmt.Errorf("%w: %v", errMissingVars, missing)
 	}
 
 	return nil
