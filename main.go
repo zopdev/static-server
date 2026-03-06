@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,7 +8,8 @@ import (
 	"strings"
 
 	"gofr.dev/pkg/gofr"
-	"gofr.dev/pkg/gofr/config"
+
+	"zop.dev/static-server/internal/config"
 )
 
 const defaultStaticFilePath = `./static`
@@ -17,46 +17,16 @@ const indexHTML = "/index.html"
 const htmlExtension = ".html"
 const rootPath = "/"
 
-func hydrateConfig(cfg config.Config) error {
-	configPath := cfg.Get("CONFIG_FILE_PATH")
-	if configPath == "" {
-		return nil
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	// Hydrate with available vars
-	result := os.Expand(string(content), cfg.Get)
-
-	if err := os.WriteFile(configPath, []byte(result), 0644); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-
-	// Detect vars that were missing (replaced with empty string)
-	re := regexp.MustCompile(`\$\{(\w+)\}`)
-	matches := re.FindAllStringSubmatch(string(content), -1)
-	var missing []string
-	for _, m := range matches {
-		if cfg.Get(m[1]) == "" {
-			missing = append(missing, m[1])
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("missing config variables: %v", missing)
-	}
-
-	return nil
-}
-
 func main() {
 	app := gofr.New()
 
-	if err := hydrateConfig(app.Config); err != nil {
-		app.Logger().Error(err)
-	}
+	app.OnStart(func(ctx *gofr.Context) error {
+		if err := config.HydrateFile(ctx.File, app.Config); err != nil {
+			ctx.Logger.Error(err)
+		}
+
+		return nil
+	})
 
 	staticFilePath := app.Config.GetOrDefault("STATIC_DIR_PATH", defaultStaticFilePath)
 
