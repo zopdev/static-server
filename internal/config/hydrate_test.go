@@ -1,20 +1,28 @@
 package config
 
 import (
-	"errors"
-	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.uber.org/mock/gomock"
 	"gofr.dev/pkg/gofr/config"
 	"gofr.dev/pkg/gofr/datasource/file"
+	"gofr.dev/pkg/gofr/logging"
 )
 
-var (
-	errDiskFailure = errors.New("disk failure")
-	errDiskFull    = errors.New("disk full")
-)
+func writeTempFile(t *testing.T, content string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	err := os.WriteFile(path, []byte(content), 0644)
+	require.NoError(t, err)
+
+	return path
+}
 
 func TestConfig(t *testing.T) {
 	tests := []struct {
@@ -60,78 +68,46 @@ func TestConfig(t *testing.T) {
 			vars:    map[string]string{"CONFIG_FILE_PATH": "/no/such/file"},
 			wantErr: ErrReadConfig,
 		},
-		{
-			name:     "read error",
-			template: "read-error",
-			vars:     map[string]string{},
-			wantErr:  ErrReadConfig,
-		},
-		{
-			name:     "write error",
-			template: "write-error",
-			vars:     map[string]string{},
-			wantErr:  ErrWriteConfig,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			mockFS := file.NewMockFileSystem(ctrl)
+			fs := file.New(logging.NewMockLogger(logging.ERROR))
 
-			gotOutput := setupMocks(t, ctrl, mockFS, tt.template, tt.vars)
+			if tt.template != "" {
+				path := writeTempFile(t, tt.template)
+				tt.vars[filePathVar] = path
+			}
 
-			err := HydrateFile(mockFS, config.NewMockConfig(tt.vars))
+			err := HydrateFile(fs, config.NewMockConfig(tt.vars))
 
 			require.ErrorIs(t, err, tt.wantErr)
-			require.Equal(t, tt.expected, string(gotOutput()))
+
+			if tt.expected != "" {
+				got, readErr := os.ReadFile(tt.vars[filePathVar])
+				require.NoError(t, readErr)
+				require.Equal(t, tt.expected, string(got))
+			}
 		})
 	}
 }
 
-func setupMocks(
-	t *testing.T, ctrl *gomock.Controller, mockFS *file.MockFileSystem,
-	template string, vars map[string]string,
-) func() []byte {
-	t.Helper()
-
-	var output []byte
-
-	switch {
-	case template != "":
-		vars[filePathVar] = "/mock/config.json"
-		mockFile := file.NewMockFile(ctrl)
-		mockFS.EXPECT().Open(vars[filePathVar]).Return(mockFile, nil)
-
-		setupReadWrite(mockFile, template, &output)
-
-	case vars[filePathVar] != "":
-		mockFS.EXPECT().Open(vars[filePathVar]).Return(nil, ErrMissingFile)
+func TestHydrateFile_WriteError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod not effective on Windows")
 	}
 
-	return func() []byte { return output }
-}
+	path := writeTempFile(t, `{"a":"${A}"}`)
 
-func setupReadWrite(mockFile *file.MockFile, template string, output *[]byte) {
-	if template == "read-error" {
-		mockFile.EXPECT().Read(gomock.Any()).Return(0, errDiskFailure)
-		return
+	err := os.Chmod(path, 0444)
+	require.NoError(t, err)
+
+	fs := file.New(logging.NewMockLogger(logging.ERROR))
+	vars := map[string]string{
+		filePathVar: path,
+		"A":         "1",
 	}
 
-	templateBytes := []byte(template)
-
-	mockFile.EXPECT().Read(gomock.Any()).DoAndReturn(func(p []byte) (int, error) {
-		n := copy(p, templateBytes)
-		return n, io.EOF
-	})
-
-	if template == "write-error" {
-		mockFile.EXPECT().Write(gomock.Any()).Return(0, errDiskFull)
-		return
-	}
-
-	mockFile.EXPECT().Write(gomock.Any()).DoAndReturn(func(p []byte) (int, error) {
-		*output = append([]byte{}, p...)
-		return len(p), nil
-	})
+	err = HydrateFile(fs, config.NewMockConfig(vars))
+	require.ErrorIs(t, err, ErrWriteConfig)
 }

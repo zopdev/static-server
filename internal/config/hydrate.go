@@ -39,10 +39,17 @@ func HydrateFile(fs file.FileSystem, cfg config.Config) error {
 		return fmt.Errorf("%w: %w", ErrReadConfig, err)
 	}
 
+	configFile.Close()
+
 	// Hydrate with available vars
 	result := os.Expand(string(content), cfg.Get)
 
-	if _, err = configFile.Write([]byte(result)); err != nil {
+	wf, err := fs.OpenFile(configPath, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrWriteConfig, err)
+	}
+
+	if _, err = wf.Write([]byte(result)); err != nil {
 		return fmt.Errorf("%w: %w", ErrWriteConfig, err)
 	}
 
