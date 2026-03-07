@@ -1,6 +1,7 @@
 package config
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,14 +13,19 @@ import (
 	"gofr.dev/pkg/gofr/logging"
 )
 
-func writeTempFile(t *testing.T, content string) string {
+func writeTempFile(t *testing.T, fs file.FileSystem, content string) string {
 	t.Helper()
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 
-	err := os.WriteFile(path, []byte(content), 0644)
+	f, err := fs.Create(path)
 	require.NoError(t, err)
+
+	_, err = f.Write([]byte(content))
+	require.NoError(t, err)
+
+	require.NoError(t, f.Close())
 
 	return path
 }
@@ -75,7 +81,7 @@ func TestConfig(t *testing.T) {
 			fs := file.New(logging.NewMockLogger(logging.ERROR))
 
 			if tt.template != "" {
-				path := writeTempFile(t, tt.template)
+				path := writeTempFile(t, fs, tt.template)
 				tt.vars[filePathVar] = path
 			}
 
@@ -84,7 +90,9 @@ func TestConfig(t *testing.T) {
 			require.ErrorIs(t, err, tt.wantErr)
 
 			if tt.expected != "" {
-				got, readErr := os.ReadFile(tt.vars[filePathVar])
+				rf, readErr := fs.Open(tt.vars[filePathVar])
+				require.NoError(t, readErr)
+				got, readErr := io.ReadAll(rf)
 				require.NoError(t, readErr)
 				require.Equal(t, tt.expected, string(got))
 			}
@@ -97,12 +105,11 @@ func TestHydrateFile_WriteError(t *testing.T) {
 		t.Skip("chmod not effective on Windows")
 	}
 
-	path := writeTempFile(t, `{"a":"${A}"}`)
+	fs := file.New(logging.NewMockLogger(logging.ERROR))
+	path := writeTempFile(t, fs, `{"a":"${A}"}`)
 
 	err := os.Chmod(path, 0444)
 	require.NoError(t, err)
-
-	fs := file.New(logging.NewMockLogger(logging.ERROR))
 	vars := map[string]string{
 		filePathVar: path,
 		"A":         "1",
