@@ -110,6 +110,7 @@ func TestHydrateFile_WriteError(t *testing.T) {
 
 	err := os.Chmod(path, 0444)
 	require.NoError(t, err)
+
 	vars := map[string]string{
 		filePathVar: path,
 		"A":         "1",
