@@ -22,6 +22,18 @@ var (
 
 const filePathVar = "CONFIG_FILE_PATH"
 
+// HydrateFile reads the file at the path specified by the CONFIG_FILE_PATH config
+// variable, substitutes every ${VAR} placeholder with the corresponding value
+// obtained from cfg, and writes the result back to the same file.
+//
+// If CONFIG_FILE_PATH is not set (empty string), HydrateFile is a no-op and
+// returns nil. If any referenced variable is not present in the config, an
+// errMissingVars error is returned after the file has been written.
+//
+// cfg is accepted as a config.Config interface rather than as individual values
+// so that the set of variables resolved is open-ended: the file may reference
+// any variable, and HydrateFile resolves each one dynamically via cfg.Get
+// without the caller needing to know which variables the file contains.
 func HydrateFile(fs file.FileSystem, cfg config.Config) error {
 	configPath := cfg.Get(filePathVar)
 	if configPath == "" {
