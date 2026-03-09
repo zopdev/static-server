@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gofr.dev/pkg/gofr"
+
+	"zop.dev/static-server/internal/config"
 )
 
 const defaultStaticFilePath = `./static`
@@ -17,6 +19,14 @@ const rootPath = "/"
 
 func main() {
 	app := gofr.New()
+
+	app.OnStart(func(ctx *gofr.Context) error {
+		if err := config.HydrateFile(ctx.File, app.Config); err != nil {
+			ctx.Logger.Error(err)
+		}
+
+		return nil
+	})
 
 	staticFilePath := app.Config.GetOrDefault("STATIC_DIR_PATH", defaultStaticFilePath)
 
