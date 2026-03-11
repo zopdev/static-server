@@ -105,7 +105,6 @@ func TestConfig(t *testing.T) {
 			got, readErr := io.ReadAll(rf)
 			require.NoError(t, readErr)
 			require.Equal(t, tt.expected, string(got))
-
 		})
 	}
 }
