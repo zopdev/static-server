@@ -22,7 +22,7 @@ func main() {
 
 	app.OnStart(func(ctx *gofr.Context) error {
 		if err := config.HydrateFile(ctx.File, app.Config); err != nil {
-			ctx.Logger.Error(err)
+			ctx.Logger.Error(err.Error())
 		}
 
 		return nil
