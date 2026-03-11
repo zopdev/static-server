@@ -19,6 +19,8 @@ This is useful for injecting runtime configuration into static front-end apps wi
 
 If any placeholders have no matching environment variable, the server still writes the file (substituting empty strings for missing values) and logs an error listing the unresolved variables.
 
+**Important:** Since the static-server image runs as `nonroot:nonroot`, the config file must be writable by the `nonroot` user. Use `COPY --chown=nonroot:nonroot` when copying the config file in your Dockerfile (see [example](#1-build-a-docker-image) below).
+
 #### Example
 
 Given a `config.json` template:
@@ -60,7 +62,9 @@ FROM zopdev/static-server:v0.0.8
 COPY /app/out /static
 
 # Set the path to the config file for environment variable hydration at startup
+# The config file must be writable by nonroot for hydration to work
 ENV CONFIG_FILE_PATH=/static/config.json
+COPY --chown=nonroot:nonroot /app/out/config.json $CONFIG_FILE_PATH
 
 # The server listens on port 8000 by default; set HTTP_PORT to change it
 
