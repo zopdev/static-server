@@ -19,7 +19,7 @@ All configuration is via environment variables:
 ### Docker
 
 ```dockerfile
-FROM zopdev/static-server:latest
+FROM zopdev/static-server:v0.0.9
 
 # Copy static files (must use --chown for nonroot user)
 COPY --chown=nonroot:nonroot ./build /static
