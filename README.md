@@ -10,9 +10,11 @@ All configuration is via environment variables:
 |----------|---------|-------------|
 | `STATIC_DIR_PATH` | `./static` | Path to the directory containing static files |
 | `SPA_MODE` | `false` | Serve `index.html` for extensionless routes that don't match a file |
-| `DEFAULT_EXTENSION` | `.html` | File extension to try when the URL has none (e.g. `/docs` serves `docs.html`) |
+| `DEFAULT_EXTENSION` | `.html` | Single extension appended when the URL has none (e.g. `/docs` → `docs<ext>`). Only this one extension is tried — setting it to a non-`.html` value disables `.html` auto-resolution. |
 | `CONFIG_FILE_PATH` | *(empty)* | Path to a config file for `${VAR}` placeholder hydration at startup |
 | `HTTP_PORT` | `8000` | Port the server listens on |
+
+> **`DEFAULT_EXTENSION` + `SPA_MODE`:** path resolution only tries one extension. If you set `DEFAULT_EXTENSION=.json`, a request for `/docs` looks for `docs.json` only — `docs.html` will not be found, and with `SPA_MODE=true` the request falls through to `index.html`. Leave `DEFAULT_EXTENSION=.html` unless every extensionless route on your site resolves to the same non-html file type.
 
 ## Usage
 

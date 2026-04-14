@@ -2,7 +2,6 @@ package main
 
 import (
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -26,7 +25,7 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	filePath, hasExtension := h.resolveFilePath(r.URL.Path)
 
-	if _, err := h.fs.Stat(filePath); os.IsNotExist(err) {
+	if _, err := h.fs.Stat(filePath); err != nil {
 		if h.spaMode && !hasExtension {
 			http.ServeFile(w, r, filepath.Join(h.staticFilePath, indexHTML))
 			return
