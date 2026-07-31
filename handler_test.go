@@ -65,7 +65,7 @@ func TestResolveFilePath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := &staticFileHandler{fs: fs, staticFilePath: dir, defaultExtension: tt.defaultExtension}
 
-			path, hasExt := h.resolveFilePath(tt.urlPath)
+			path, hasExt := h.resolveFilePath(tt.urlPath, "")
 
 			assert.Equal(t, tt.wantPath, path)
 			assert.Equal(t, tt.wantHasExt, hasExt)
