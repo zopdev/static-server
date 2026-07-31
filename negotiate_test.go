@@ -102,7 +102,7 @@ func TestResolveFilePathMarkdownNegotiation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := &staticFileHandler{fs: fs, staticFilePath: dir, defaultExtension: ".html"}
 
-			path, _ := h.resolveFilePath(tt.urlPath, tt.accept)
+			path, _ := h.resolveFilePath(tt.urlPath, markdownPreferred(tt.accept))
 
 			assert.Equal(t, filepath.Join(dir, tt.wantFile), path)
 		})
@@ -123,7 +123,7 @@ func TestServeHTTPMarkdownNegotiation(t *testing.T) {
 	}
 
 	t.Run("agent receives markdown with the right content type", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/about", http.NoBody)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about", http.NoBody)
 		req.Header.Set("Accept", "text/markdown")
 
 		rec := httptest.NewRecorder()
@@ -135,7 +135,7 @@ func TestServeHTTPMarkdownNegotiation(t *testing.T) {
 	})
 
 	t.Run("browser still receives html", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/about", http.NoBody)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about", http.NoBody)
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 
 		rec := httptest.NewRecorder()
@@ -147,7 +147,7 @@ func TestServeHTTPMarkdownNegotiation(t *testing.T) {
 	})
 
 	t.Run("Vary: Accept is always set so caches do not cross-serve", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/about", http.NoBody)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about", http.NoBody)
 		rec := httptest.NewRecorder()
 		newHandler().ServeHTTP(rec, req)
 
@@ -155,11 +155,39 @@ func TestServeHTTPMarkdownNegotiation(t *testing.T) {
 	})
 
 	t.Run("direct .md request keeps working", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/about.md", http.NoBody)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about.md", http.NoBody)
 		rec := httptest.NewRecorder()
 		newHandler().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Contains(t, rec.Body.String(), "markdown source")
+	})
+
+	t.Run("a miss is answered in markdown, not a large HTML shell", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/no/such/page", http.NoBody)
+		req.Header.Set("Accept", "text/markdown")
+
+		rec := httptest.NewRecorder()
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Contains(t, rec.Header().Get("Content-Type"), "text/markdown")
+		assert.Contains(t, rec.Body.String(), "404 Not Found")
+		// Recovery pointers, so the reader can find real URLs itself.
+		assert.Contains(t, rec.Body.String(), "/sitemap.xml")
+		// An HTML 404 shell on a real site measured 144 KB.
+		assert.Less(t, rec.Body.Len(), 1024)
+	})
+
+	t.Run("a browser still gets the HTML 404 page", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/no/such/page", http.NoBody)
+		req.Header.Set("Accept", "text/html,*/*;q=0.8")
+
+		rec := httptest.NewRecorder()
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Contains(t, rec.Body.String(), "404")
+		assert.NotContains(t, rec.Header().Get("Content-Type"), "markdown")
 	})
 }

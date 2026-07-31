@@ -13,14 +13,42 @@ const (
 	legacyMarkdownMediaType = "text/x-markdown"
 	htmlMediaType           = "text/html"
 	xhtmlMediaType          = "application/xhtml+xml"
+
+	// Set explicitly when serving markdown. Go's built-in MIME table has no
+	// entry for .md and a scratch base image has no /etc/mime.types, so
+	// http.ServeFile would otherwise sniff the file and label it text/plain.
+	markdownContentType = "text/markdown; charset=utf-8"
+
+	defaultQuality = 1.0
 )
 
-// Go's built-in MIME table has no entry for .md, and a scratch/distroless
-// image has no /etc/mime.types to fall back on, so http.ServeFile would sniff
-// the file and label it text/plain. Register it explicitly so the content type
-// is correct regardless of what the base image ships.
-func init() {
-	_ = mime.AddExtensionType(markdownExtension, "text/markdown; charset=utf-8")
+// acceptEntry is one parsed media range from an Accept header.
+type acceptEntry struct {
+	mediaType string
+	quality   float64
+}
+
+// parseAcceptEntry parses a single Accept media range. Entries that are
+// malformed, or that carry an unparseable q-value, are reported as unusable
+// rather than guessed at.
+func parseAcceptEntry(entry string) (acceptEntry, bool) {
+	mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(entry))
+	if err != nil {
+		return acceptEntry{}, false
+	}
+
+	quality := defaultQuality
+
+	if raw, ok := params["q"]; ok {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return acceptEntry{}, false
+		}
+
+		quality = parsed
+	}
+
+	return acceptEntry{mediaType: mediaType, quality: quality}, true
 }
 
 // markdownPreferred reports whether the client asked for markdown in
@@ -33,7 +61,7 @@ func init() {
 // explicit media type counts.
 //
 // Agents that want markdown do name it: Claude Code, Cursor and OpenCode all
-// send `text/markdown` today. Quality values are honoured, so a client that
+// send `text/markdown` today. Quality values are honored, so a client that
 // lists markdown below HTML (`text/html, text/markdown;q=0.1`) still gets
 // HTML — it expressed a preference and we respect it.
 func markdownPreferred(accept string) bool {
@@ -41,40 +69,24 @@ func markdownPreferred(accept string) bool {
 		return false
 	}
 
-	var markdownQ, htmlQ float64
+	var markdownQuality, htmlQuality float64
 
 	named := false
 
-	for _, entry := range strings.Split(accept, ",") {
-		mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(entry))
-		if err != nil {
+	for _, raw := range strings.Split(accept, ",") {
+		entry, ok := parseAcceptEntry(raw)
+		if !ok {
 			continue
 		}
 
-		q := 1.0
-
-		if raw, ok := params["q"]; ok {
-			parsed, err := strconv.ParseFloat(raw, 64)
-			if err != nil {
-				continue
-			}
-
-			q = parsed
-		}
-
-		switch mediaType {
+		switch entry.mediaType {
 		case markdownMediaType, legacyMarkdownMediaType:
 			named = true
-
-			if q > markdownQ {
-				markdownQ = q
-			}
+			markdownQuality = max(markdownQuality, entry.quality)
 		case htmlMediaType, xhtmlMediaType:
-			if q > htmlQ {
-				htmlQ = q
-			}
+			htmlQuality = max(htmlQuality, entry.quality)
 		}
 	}
 
-	return named && markdownQ > 0 && markdownQ >= htmlQ
+	return named && markdownQuality > 0 && markdownQuality >= htmlQuality
 }

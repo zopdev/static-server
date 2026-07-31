@@ -23,7 +23,9 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath, hasExtension := h.resolveFilePath(r.URL.Path, r.Header.Get("Accept"))
+	wantsMarkdown := markdownPreferred(r.Header.Get("Accept"))
+
+	filePath, hasExtension := h.resolveFilePath(r.URL.Path, wantsMarkdown)
 
 	// The response body for a given URL now depends on Accept, so caches must
 	// key on it. Without this a CDN can hand an agent's markdown response to
@@ -36,16 +38,49 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// A client that asked for markdown cannot use an HTML error shell —
+		// and those shells are not small. The 404 page of a real site measured
+		// 144 KB, sent in reply to a request the client could not parse.
+		// Answer in the type it asked for, at a size that suits an error.
+		if wantsMarkdown {
+			writeMarkdownNotFound(w)
+			return
+		}
+
 		http.ServeFile(&statusOverrideWriter{ResponseWriter: w, status: http.StatusNotFound}, r,
 			filepath.Join(h.staticFilePath, "404.html"))
 
 		return
 	}
 
+	// http.ServeFile only sniffs a Content-Type when one is not already set,
+	// so setting it here wins. Applies to negotiated and directly-requested
+	// .md alike — neither can rely on the base image having /etc/mime.types.
+	if strings.HasSuffix(filePath, markdownExtension) {
+		w.Header().Set("Content-Type", markdownContentType)
+	}
+
 	http.ServeFile(w, r, filePath)
 }
 
-func (h *staticFileHandler) resolveFilePath(urlPath, accept string) (string, bool) {
+// The requested path is deliberately not echoed back. Reflecting a
+// caller-controlled string into a response body is an injection sink even at
+// text/markdown, and the caller already knows which URL it asked for — the
+// recovery pointers are the part it does not have.
+const notFoundMarkdown = "# 404 Not Found\n\n" +
+	"The requested page does not exist on this server.\n\n" +
+	"See /sitemap.xml for the pages that do, or /llms.txt for an overview.\n"
+
+// writeMarkdownNotFound answers a miss in markdown and points the reader at
+// the two files that let it recover on its own rather than guessing at URLs.
+func writeMarkdownNotFound(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", markdownContentType)
+	w.WriteHeader(http.StatusNotFound)
+
+	_, _ = w.Write([]byte(notFoundMarkdown))
+}
+
+func (h *staticFileHandler) resolveFilePath(urlPath string, wantsMarkdown bool) (string, bool) {
 	filePath := filepath.Join(h.staticFilePath, urlPath)
 
 	hasExtension := filepath.Ext(filePath) != ""
@@ -62,7 +97,7 @@ func (h *staticFileHandler) resolveFilePath(urlPath, accept string) (string, boo
 	//
 	// Falls through untouched when the client didn't ask or the file isn't
 	// there, so nothing an existing deployment serves today can change.
-	if !hasExtension && urlPath != rootPath && markdownPreferred(accept) {
+	if !hasExtension && urlPath != rootPath && wantsMarkdown {
 		if _, err := h.fs.Stat(filePath + markdownExtension); err == nil {
 			return filePath + markdownExtension, true
 		}
