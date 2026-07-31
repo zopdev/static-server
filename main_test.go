@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"gofr.dev/pkg/gofr/datasource/file"
 	"gofr.dev/pkg/gofr/logging"
 )
@@ -54,5 +55,35 @@ func TestServer(t *testing.T) {
 		}
 
 		_ = resp.Body.Close()
+	}
+}
+
+// The shipped configs/.env sets STATIC_DIR_PATH= and DEFAULT_EXTENSION= with
+// empty values. GetOrDefault only falls back on an ABSENT key, so an empty one
+// yields "" and roots every lookup at the process working directory — which is
+// how a container given STATIC_DIR_PATH via the environment silently loaded
+// zero _headers rules while still serving pages.
+func TestEmptyConfigValuesFallBackToDefaults(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    string
+		fallback string
+		want     string
+	}{
+		{"empty static path falls back", "", defaultStaticFilePath, defaultStaticFilePath},
+		{"empty extension falls back", "", htmlExtension, htmlExtension},
+		{"a real value is kept", "/static", defaultStaticFilePath, "/static"},
+		{"a real extension is kept", ".htm", htmlExtension, ".htm"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.value
+			if got == "" {
+				got = tt.fallback
+			}
+
+			assert.Equal(t, tt.want, got)
+		})
 	}
 }
