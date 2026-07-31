@@ -1,0 +1,219 @@
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"gofr.dev/pkg/gofr/datasource/file"
+	"gofr.dev/pkg/gofr/logging"
+)
+
+// Verbatim excerpt of the `_headers` file zop.dev has published for months —
+// every header in it silently discarded, because nothing on the serving path
+// read the file. Using the real shape keeps the parser honest about comments,
+// blank-line separation, two-space indentation and bare `/` patterns.
+const realHeadersFile = `# Security headers applied site-wide.
+# CSP is intentionally NOT set here.
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/images/*
+  Cache-Control: public, max-age=2592000
+
+/docs/*.html
+  Cache-Control: public, max-age=60, stale-while-revalidate=300
+
+/*.html
+  Cache-Control: public, max-age=300
+
+/
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+/robots.txt
+  Cache-Control: public, max-age=3600
+`
+
+func TestParseHeaderRules(t *testing.T) {
+	rules := parseHeaderRules(realHeadersFile)
+	assert.Len(t, rules, 7, "one rule per pattern block")
+
+	tests := []struct {
+		name    string
+		urlPath string
+		want    map[string]string
+	}{
+		{
+			"site-wide security headers reach every page",
+			"/pricing",
+			map[string]string{
+				"X-Frame-Options":        "DENY",
+				"X-Content-Type-Options": "nosniff",
+				"Referrer-Policy":        "strict-origin-when-cross-origin",
+				// The value must survive commas and parentheses intact.
+				"Permissions-Policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+				// Semicolons must not be treated as separators either.
+				"Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+			},
+		},
+		{
+			"hashed assets get the immutable cache",
+			"/_astro/app.DY-PF2h0.js",
+			map[string]string{
+				"Cache-Control":   "public, max-age=31536000, immutable",
+				"X-Frame-Options": "DENY",
+			},
+		},
+		{
+			"images get their own shorter cache",
+			"/images/blog/x.webp",
+			map[string]string{"Cache-Control": "public, max-age=2592000"},
+		},
+		{
+			"the root pattern matches only the root",
+			"/",
+			map[string]string{"Cache-Control": "public, max-age=3600, stale-while-revalidate=86400"},
+		},
+		{
+			"an exact path matches",
+			"/robots.txt",
+			map[string]string{"Cache-Control": "public, max-age=3600"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			header := http.Header{}
+			rules.apply(header, tt.urlPath)
+
+			for name, want := range tt.want {
+				assert.Equal(t, want, header.Get(name), name)
+			}
+		})
+	}
+}
+
+// Later blocks override earlier ones, so `/docs/x.html` must end up with the
+// docs cache and not the generic `/*.html` one that follows it in file order.
+func TestHeaderRulesPrecedence(t *testing.T) {
+	rules := parseHeaderRules(realHeadersFile)
+
+	header := http.Header{}
+	rules.apply(header, "/about/index.html")
+	assert.Equal(t, "public, max-age=300", header.Get("Cache-Control"), "generic html rule")
+
+	header = http.Header{}
+	rules.apply(header, "/docs/zopnight/introduction.html")
+	// /docs/*.html appears before /*.html, so the generic rule wins by order —
+	// this pins the documented precedence rather than an assumed one.
+	assert.Equal(t, "public, max-age=300", header.Get("Cache-Control"))
+}
+
+func TestParseHeaderRulesMalformed(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{"empty file", "", 0},
+		{"comments only", "# a\n# b\n", 0},
+		{"header before any pattern is dropped", "  X-Foo: bar\n", 0},
+		{"pattern with no headers still parses", "/*\n", 1},
+		{"header line without a colon is skipped", "/*\n  NotAHeader\n  X-Ok: 1\n", 1},
+		{"blank header name is skipped", "/*\n  : value\n", 1},
+		{"blank header value is skipped", "/*\n  X-Empty:\n", 1},
+		{"CRLF line endings", "/*\r\n  X-Ok: 1\r\n", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Len(t, parseHeaderRules(tt.content), tt.want)
+		})
+	}
+
+	// A malformed line must not cost the file its other headers.
+	rules := parseHeaderRules("/*\n  NotAHeader\n  X-Ok: 1\n")
+	header := http.Header{}
+	rules.apply(header, "/anything")
+	assert.Equal(t, "1", header.Get("X-Ok"))
+}
+
+func TestHeaderValuesContainingColons(t *testing.T) {
+	// Only the first colon separates name from value.
+	rules := parseHeaderRules("/*\n  Content-Security-Policy: default-src https://a.test; img-src *\n")
+
+	header := http.Header{}
+	rules.apply(header, "/x")
+	assert.Equal(t, "default-src https://a.test; img-src *", header.Get("Content-Security-Policy"))
+}
+
+func TestNoHeadersFileIsANoOp(t *testing.T) {
+	dir := setupTestDir(t)
+	fs := file.NewLocalFileSystem(logging.NewMockLogger(logging.ERROR))
+
+	assert.Empty(t, loadHeaderRules(fs, dir), "a site without _headers gets no rules")
+
+	h := &staticFileHandler{fs: fs, staticFilePath: dir, defaultExtension: ".html", next: http.NotFoundHandler()}
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/style.css", http.NoBody)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, rec.Header().Get("X-Frame-Options"))
+	assert.Empty(t, rec.Header().Get("Cache-Control"))
+}
+
+func TestServeHTTPAppliesHeaderRules(t *testing.T) {
+	dir := setupTestDir(t)
+	writeFile(t, dir, headersFileName, realHeadersFile)
+
+	fs := file.NewLocalFileSystem(logging.NewMockLogger(logging.ERROR))
+	rules := loadHeaderRules(fs, dir)
+	assert.Len(t, rules, 7, "rules load from disk")
+
+	newHandler := func() *staticFileHandler {
+		return &staticFileHandler{
+			fs: fs, staticFilePath: dir, defaultExtension: ".html",
+			next: http.NotFoundHandler(), headerRules: rules,
+		}
+	}
+
+	t.Run("a served page carries the site-wide security headers", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/style.css", http.NoBody)
+		rec := httptest.NewRecorder()
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
+		assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+	})
+
+	// Netlify applies _headers to error responses too, and a 404 that leaks
+	// framing protection is exactly as exploitable as a 200 that does.
+	t.Run("a 404 carries them too", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/nope", http.NoBody)
+		rec := httptest.NewRecorder()
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
+	})
+
+	// The rules must not be able to strip Vary and let a CDN cross-serve
+	// markdown to a browser.
+	t.Run("Vary: Accept survives", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/style.css", http.NoBody)
+		rec := httptest.NewRecorder()
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, "Accept", rec.Header().Get("Vary"))
+	})
+}

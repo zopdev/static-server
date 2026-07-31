@@ -14,6 +14,10 @@ type staticFileHandler struct {
 	spaMode          bool
 	defaultExtension string
 	next             http.Handler
+
+	// Parsed once at startup from `_headers`; nil when the site has no such
+	// file, in which case nothing about the response changes.
+	headerRules headerRules
 }
 
 func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -26,6 +30,11 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wantsMarkdown := markdownPreferred(r.Header.Get("Accept"))
 
 	filePath, hasExtension := h.resolveFilePath(r.URL.Path, wantsMarkdown)
+
+	// Applied before anything writes, so it covers hits, misses and the SPA
+	// fallback alike. Set first so the server's own headers below still win
+	// where they are load-bearing.
+	h.headerRules.apply(w.Header(), r.URL.Path)
 
 	// The response body for a given URL now depends on Accept, so caches must
 	// key on it. Without this a CDN can hand an agent's markdown response to

@@ -35,6 +35,11 @@ func main() {
 			ctx.Logger.Error(err.Error())
 		}
 
+		// Read once at startup rather than per request. Absent file → no rules
+		// → responses are byte-for-byte what they are today.
+		handler.headerRules = loadHeaderRules(ctx.File, staticFilePath)
+		ctx.Logger.Infof("loaded %d %s rule(s)", len(handler.headerRules), headersFileName)
+
 		return nil
 	})
 
