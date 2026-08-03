@@ -21,8 +21,20 @@ type staticFileHandler struct {
 }
 
 func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Applied before anything writes, so it covers hits, misses, the SPA
+	// fallback and the delegated paths below alike. Set first so the server's
+	// own headers further down still win where they are load-bearing.
+	h.headerRules.apply(w.Header(), r.URL.Path)
+
+	// .well-known is handed off untouched — ACME challenges and the like must
+	// not pick up an extension or the SPA fallback. The site's headers still
+	// apply to it: a `/*` block declaring X-Frame-Options means the whole site,
+	// and a path this server delegates is still a path it answers for.
+	//
+	// The status is not known here, because the delegate chooses it, so the
+	// cache directives are withdrawn on the way out instead of up front.
 	if strings.Contains(r.URL.Path, "/.well-known/") {
-		h.next.ServeHTTP(w, r)
+		h.next.ServeHTTP(&errorCacheScrubber{ResponseWriter: w}, r)
 
 		return
 	}
@@ -30,11 +42,6 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wantsMarkdown := markdownPreferred(r.Header.Get("Accept"))
 
 	filePath, hasExtension := h.resolveFilePath(r.URL.Path, wantsMarkdown)
-
-	// Applied before anything writes, so it covers hits, misses and the SPA
-	// fallback alike. Set first so the server's own headers below still win
-	// where they are load-bearing.
-	h.headerRules.apply(w.Header(), r.URL.Path)
 
 	if _, err := h.fs.Stat(filePath); err != nil {
 		if h.spaMode && !hasExtension {
@@ -73,13 +80,7 @@ func (h *staticFileHandler) serveNotFound(w http.ResponseWriter, r *http.Request
 	// extensions that never negotiate on a hit.
 	w.Header().Add("Vary", "Accept")
 
-	// A site's Cache-Control is written for the pages it publishes, not for the
-	// ones it does not have. Letting a `/*` rule reach here would pin a
-	// transient miss — a file not yet propagated mid-deploy — into every cache
-	// between this server and the reader for the rule's full lifetime. The
-	// security headers still apply: a 404 that leaks framing protection is as
-	// exploitable as a 200 that does.
-	w.Header().Del("Cache-Control")
+	withdrawCacheDirectives(w.Header())
 
 	// A client that asked for markdown cannot use an HTML error shell — and
 	// those shells are not small. The 404 page of a real site measured 144 KB,
@@ -145,6 +146,41 @@ func (h *staticFileHandler) resolveFilePath(urlPath string, wantsMarkdown bool) 
 	}
 
 	return filePath, hasExtension
+}
+
+// withdrawCacheDirectives removes the site's Cache-Control from a response that
+// turned out not to be a page it publishes.
+//
+// A `_headers` file describes what a site serves; an error is not that. Letting
+// a `/*.html` rule reach a miss would pin a file that is merely un-propagated
+// mid-deploy into every cache between this server and the reader for the rule's
+// full lifetime. The security headers still apply either way — a 404 that leaks
+// framing protection is as exploitable as a 200 that does.
+//
+// This is the one definition of that rule; both the miss path and the delegated
+// .well-known path go through it, so they cannot drift apart.
+func withdrawCacheDirectives(header http.Header) {
+	header.Del("Cache-Control")
+}
+
+// errorCacheScrubber applies withdrawCacheDirectives to a response whose status
+// is chosen by a handler this server delegated to, and is therefore not known
+// when the `_headers` rules are set.
+//
+// Deliberately not used on the main serving path: wrapping the writer there
+// would hide net/http's io.ReaderFrom from http.ServeFile and cost every static
+// file its sendfile fast path. The delegated paths are ACME challenges and the
+// like — small, rare, and not worth a special case to keep fast.
+type errorCacheScrubber struct {
+	http.ResponseWriter
+}
+
+func (w *errorCacheScrubber) WriteHeader(status int) {
+	if status >= http.StatusBadRequest {
+		withdrawCacheDirectives(w.Header())
+	}
+
+	w.ResponseWriter.WriteHeader(status)
 }
 
 type statusOverrideWriter struct {

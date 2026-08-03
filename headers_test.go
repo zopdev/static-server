@@ -257,3 +257,88 @@ func TestServeHTTPAppliesHeaderRules(t *testing.T) {
 		assert.Empty(t, rec.Header().Get("Vary"), "an unnegotiable asset must not fragment caches")
 	})
 }
+
+// TestWellKnownCarriesHeaderRules covers the paths this server hands off rather
+// than serves. .well-known is delegated so that ACME challenges are not given an
+// extension or swallowed by the SPA fallback — but a site declaring
+// X-Frame-Options for `/*` means the whole site, and a delegated path is still
+// one this server answered for.
+func TestWellKnownCarriesHeaderRules(t *testing.T) {
+	dir := setupTestDir(t)
+	writeFile(t, dir, headersFileName, realHeadersFile)
+
+	fs := file.NewLocalFileSystem(logging.NewMockLogger(logging.ERROR))
+	rules := loadHeaderRules(fs, dir)
+
+	newHandler := func(next http.Handler) *staticFileHandler {
+		return &staticFileHandler{
+			fs: fs, staticFilePath: dir, defaultExtension: ".html",
+			next: next, headerRules: rules,
+		}
+	}
+
+	// The delegate still decides the body and status: passing through must not
+	// mean passing through unprotected.
+	t.Run("a delegated response carries the site-wide security headers", func(t *testing.T) {
+		served := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("acme-challenge-token"))
+		})
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+			"/.well-known/acme-challenge/token.html", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		newHandler(served).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "acme-challenge-token", rec.Body.String(), "the delegate still writes the body")
+		assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
+		assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+	})
+
+	// A delegate that succeeds is serving a real file, so it keeps the caching
+	// the site asked for.
+	t.Run("a delegated 200 keeps the site's Cache-Control", func(t *testing.T) {
+		served := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+			"/.well-known/security.html", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		newHandler(served).ServeHTTP(rec, req)
+
+		assert.Equal(t, "public, max-age=300", rec.Header().Get("Cache-Control"),
+			"a real delegated file is still a page the site publishes")
+	})
+
+	// ...but a delegated miss must not be cached, for the same reason a directly
+	// served miss must not be.
+	t.Run("a delegated 404 does not inherit Cache-Control", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+			"/.well-known/acme-challenge/absent.html", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		newHandler(http.NotFoundHandler()).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Empty(t, rec.Header().Get("Cache-Control"))
+		assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"), "security headers still apply")
+	})
+
+	// Delegation itself must survive: this path is how ACME issues certificates.
+	t.Run("the path is still handed to the delegate untouched", func(t *testing.T) {
+		var gotPath string
+
+		spy := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { gotPath = r.URL.Path })
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+			"/.well-known/acme-challenge/xyz", http.NoBody)
+
+		newHandler(spy).ServeHTTP(httptest.NewRecorder(), req)
+
+		assert.Equal(t, "/.well-known/acme-challenge/xyz", gotPath, "no extension, no rewriting")
+	})
+}
