@@ -38,6 +38,25 @@ func negotiable(urlPath string) bool {
 	return urlPath != rootPath && filepath.Ext(urlPath) == ""
 }
 
+// labelAsMarkdown reports whether this server should set an explicit markdown
+// Content-Type rather than leaving the type to http.ServeFile.
+//
+// Only a negotiated response gets one. ServeFile would otherwise sniff the file
+// as text/plain wherever the platform has no `.md` entry — Go's built-in table
+// has none and the distroless base image ships no /etc/mime.types, so that is
+// the case in production.
+//
+// A directly requested .md is left alone on purpose: whatever it resolves to
+// today is what a site's existing .md links already behave like, and browsers
+// render text/plain inline but download text/markdown. Note the starting point
+// differs by platform — most Linux distributions do map .md, so there the type
+// is already text/markdown and this changes nothing. That is why the decision
+// is tested through this function: asserting on a served response would only
+// pin whatever the host's MIME table happens to say.
+func labelAsMarkdown(wantsMarkdown bool, urlPath, filePath string) bool {
+	return wantsMarkdown && negotiable(urlPath) && strings.HasSuffix(filePath, markdownExtension)
+}
+
 // acceptEntry is one parsed media range from an Accept header.
 type acceptEntry struct {
 	mediaType string

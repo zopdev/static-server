@@ -57,11 +57,9 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// http.ServeFile only sniffs a Content-Type when one is not already set,
-	// so setting it here wins. Scoped to a negotiated response on purpose: a
-	// directly requested .md keeps the type it resolves to today, because
-	// browsers render text/plain inline but download text/markdown, and
-	// relabelling would turn every existing .md link into a download prompt.
-	if wantsMarkdown && negotiable(r.URL.Path) && strings.HasSuffix(filePath, markdownExtension) {
+	// so setting it here wins. See labelAsMarkdown for why this is scoped to a
+	// negotiated response.
+	if labelAsMarkdown(wantsMarkdown, r.URL.Path, filePath) {
 		w.Header().Set("Content-Type", markdownContentType)
 	}
 

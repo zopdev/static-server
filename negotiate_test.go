@@ -1,6 +1,7 @@
 package main
 
 import (
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -183,12 +184,45 @@ func TestServeHTTPMarkdownNegotiation(t *testing.T) {
 	})
 }
 
-// TestMarkdownContentTypeScope pins which responses get relabelled as markdown.
+// TestLabelAsMarkdown pins which responses this server relabels as markdown.
 //
-// The scope is deliberately narrow. A directly requested .md is not a
-// negotiated response and must keep the type it resolves to today: browsers
-// render text/plain inline but download text/markdown, so relabelling it would
-// turn every existing .md link on a site into a download prompt.
+// Asserted on the decision rather than on a served Content-Type, because the
+// starting point is not the same everywhere: most Linux distributions map .md
+// in /etc/mime.types, so http.ServeFile already answers text/markdown there,
+// while macOS and the distroless image that ships to production have no entry
+// and sniff text/plain. A test that read the header back would pin the host's
+// MIME table, not this server's behavior — and would pass or fail by platform.
+func TestLabelAsMarkdown(t *testing.T) {
+	tests := []struct {
+		name          string
+		wantsMarkdown bool
+		urlPath       string
+		filePath      string
+		want          bool
+	}{
+		{"negotiated route", true, "/about", "/site/about.md", true},
+		{"nested negotiated route", true, "/docs/intro", "/site/docs/intro.md", true},
+
+		// The case this scoping exists for: the client did not negotiate, so
+		// the file keeps whatever type it already had.
+		{"direct .md, no Accept", false, "/about.md", "/site/about.md", false},
+		{"direct .md, but asking for markdown", true, "/about.md", "/site/about.md", false},
+
+		{"negotiable route that fell through to html", true, "/legal", "/site/legal/index.html", false},
+		{"root never negotiates", true, rootPath, "/site/index.html", false},
+		{"asset", true, "/style.css", "/site/style.css", false},
+		{"client never asked", false, "/about", "/site/about.md", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, labelAsMarkdown(tt.wantsMarkdown, tt.urlPath, tt.filePath))
+		})
+	}
+}
+
+// TestMarkdownContentTypeScope checks the same scoping end to end, in the terms
+// a platform can actually agree on.
 func TestMarkdownContentTypeScope(t *testing.T) {
 	dir := setupNegotiationDir(t)
 	fs := file.NewLocalFileSystem(logging.NewMockLogger(logging.ERROR))
@@ -202,7 +236,15 @@ func TestMarkdownContentTypeScope(t *testing.T) {
 		}
 	}
 
-	t.Run("direct .md keeps working and keeps its type", func(t *testing.T) {
+	// What http.ServeFile labels a .md as when this server keeps its hands off:
+	// the system MIME table where there is an entry, sniffed text/plain where
+	// there is not (Go's built-in table has none, and neither does distroless).
+	untouchedType := mime.TypeByExtension(markdownExtension)
+	if untouchedType == "" {
+		untouchedType = "text/plain; charset=utf-8"
+	}
+
+	t.Run("direct .md keeps working and keeps the platform's type", func(t *testing.T) {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about.md", http.NoBody)
 		rec := httptest.NewRecorder()
 
@@ -210,13 +252,14 @@ func TestMarkdownContentTypeScope(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Contains(t, rec.Body.String(), "markdown source")
-		assert.NotContains(t, rec.Header().Get("Content-Type"), "text/markdown",
-			"a direct .md must keep the type it has today")
+		assert.Equal(t, untouchedType, rec.Header().Get("Content-Type"),
+			"a direct .md must keep the type it would have had without this server")
 		assert.Empty(t, rec.Header().Get("Vary"), "a direct .md never negotiates")
 	})
 
-	// The same bytes reached two ways: only the negotiated route relabels them.
-	t.Run("the same file is text/markdown only when negotiated", func(t *testing.T) {
+	// A negotiated response is labeled on every platform, including the one
+	// that would otherwise sniff it as plain text.
+	t.Run("a negotiated response is always labeled markdown", func(t *testing.T) {
 		negotiated := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about", http.NoBody)
 		negotiated.Header.Set("Accept", "text/markdown")
 
@@ -230,8 +273,7 @@ func TestMarkdownContentTypeScope(t *testing.T) {
 		newHandler().ServeHTTP(dirRec, direct)
 
 		assert.Equal(t, negRec.Body.String(), dirRec.Body.String(), "same bytes either way")
-		assert.Contains(t, negRec.Header().Get("Content-Type"), "text/markdown")
-		assert.NotContains(t, dirRec.Header().Get("Content-Type"), "text/markdown")
+		assert.Equal(t, markdownContentType, negRec.Header().Get("Content-Type"))
 	})
 
 	// The root is served straight from index.html and never negotiates, so it
