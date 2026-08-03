@@ -2,6 +2,7 @@ package main
 
 import (
 	"mime"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -21,6 +22,21 @@ const (
 
 	defaultQuality = 1.0
 )
+
+// negotiable reports whether the response for a URL path can depend on Accept.
+//
+// Only an extensionless route can resolve to a `.md` sibling; the root is
+// served from index.html and never negotiates. Everything else — hashed
+// bundles, images, a directly requested .md — resolves to the same file
+// whatever the client asks for, so its response neither varies nor needs to
+// say that it might.
+//
+// This is the single definition of that condition: resolveFilePath gates
+// negotiation on it and the handler gates Vary and the markdown Content-Type
+// on it, so the three cannot drift apart.
+func negotiable(urlPath string) bool {
+	return urlPath != rootPath && filepath.Ext(urlPath) == ""
+}
 
 // acceptEntry is one parsed media range from an Accept header.
 type acceptEntry struct {

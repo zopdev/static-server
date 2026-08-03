@@ -36,40 +36,64 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// where they are load-bearing.
 	h.headerRules.apply(w.Header(), r.URL.Path)
 
-	// The response body for a given URL now depends on Accept, so caches must
-	// key on it. Without this a CDN can hand an agent's markdown response to
-	// the next browser that asks for the same page.
-	w.Header().Add("Vary", "Accept")
-
 	if _, err := h.fs.Stat(filePath); err != nil {
 		if h.spaMode && !hasExtension {
 			http.ServeFile(w, r, filepath.Join(h.staticFilePath, indexHTML))
 			return
 		}
 
-		// A client that asked for markdown cannot use an HTML error shell —
-		// and those shells are not small. The 404 page of a real site measured
-		// 144 KB, sent in reply to a request the client could not parse.
-		// Answer in the type it asked for, at a size that suits an error.
-		if wantsMarkdown {
-			writeMarkdownNotFound(w)
-			return
-		}
-
-		http.ServeFile(&statusOverrideWriter{ResponseWriter: w, status: http.StatusNotFound}, r,
-			filepath.Join(h.staticFilePath, "404.html"))
+		h.serveNotFound(w, r, wantsMarkdown)
 
 		return
 	}
 
+	// Only a negotiable route can resolve to a .md sibling, so only there can
+	// the body depend on Accept. Advertising Vary on everything else would
+	// fragment caches on a header that cannot change what they return — and
+	// those are exactly the hashed assets `_headers` marks immutable, so the
+	// cost would land on the responses this server most wants cached.
+	if negotiable(r.URL.Path) {
+		w.Header().Add("Vary", "Accept")
+	}
+
 	// http.ServeFile only sniffs a Content-Type when one is not already set,
-	// so setting it here wins. Applies to negotiated and directly-requested
-	// .md alike — neither can rely on the base image having /etc/mime.types.
-	if strings.HasSuffix(filePath, markdownExtension) {
+	// so setting it here wins. Scoped to a negotiated response on purpose: a
+	// directly requested .md keeps the type it resolves to today, because
+	// browsers render text/plain inline but download text/markdown, and
+	// relabelling would turn every existing .md link into a download prompt.
+	if wantsMarkdown && negotiable(r.URL.Path) && strings.HasSuffix(filePath, markdownExtension) {
 		w.Header().Set("Content-Type", markdownContentType)
 	}
 
 	http.ServeFile(w, r, filePath)
+}
+
+// serveNotFound answers a miss, in the type the client asked for.
+func (h *staticFileHandler) serveNotFound(w http.ResponseWriter, r *http.Request, wantsMarkdown bool) {
+	// A miss is answered in markdown whenever the client asked for it, so this
+	// response depends on Accept whatever the path looks like — including the
+	// extensions that never negotiate on a hit.
+	w.Header().Add("Vary", "Accept")
+
+	// A site's Cache-Control is written for the pages it publishes, not for the
+	// ones it does not have. Letting a `/*` rule reach here would pin a
+	// transient miss — a file not yet propagated mid-deploy — into every cache
+	// between this server and the reader for the rule's full lifetime. The
+	// security headers still apply: a 404 that leaks framing protection is as
+	// exploitable as a 200 that does.
+	w.Header().Del("Cache-Control")
+
+	// A client that asked for markdown cannot use an HTML error shell — and
+	// those shells are not small. The 404 page of a real site measured 144 KB,
+	// sent in reply to a request the client could not parse. Answer in the type
+	// it asked for, at a size that suits an error.
+	if wantsMarkdown {
+		writeMarkdownNotFound(w)
+		return
+	}
+
+	http.ServeFile(&statusOverrideWriter{ResponseWriter: w, status: http.StatusNotFound}, r,
+		filepath.Join(h.staticFilePath, "404.html"))
 }
 
 // The requested path is deliberately not echoed back. Reflecting a
@@ -106,7 +130,7 @@ func (h *staticFileHandler) resolveFilePath(urlPath string, wantsMarkdown bool) 
 	//
 	// Falls through untouched when the client didn't ask or the file isn't
 	// there, so nothing an existing deployment serves today can change.
-	if !hasExtension && urlPath != rootPath && wantsMarkdown {
+	if wantsMarkdown && negotiable(urlPath) {
 		if _, err := h.fs.Stat(filePath + markdownExtension); err == nil {
 			return filePath + markdownExtension, true
 		}

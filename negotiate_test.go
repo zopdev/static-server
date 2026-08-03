@@ -146,21 +146,12 @@ func TestServeHTTPMarkdownNegotiation(t *testing.T) {
 		assert.Contains(t, rec.Header().Get("Content-Type"), "text/html")
 	})
 
-	t.Run("Vary: Accept is always set so caches do not cross-serve", func(t *testing.T) {
+	t.Run("Vary: Accept is set on a route that can negotiate", func(t *testing.T) {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about", http.NoBody)
 		rec := httptest.NewRecorder()
 		newHandler().ServeHTTP(rec, req)
 
 		assert.Equal(t, "Accept", rec.Header().Get("Vary"))
-	})
-
-	t.Run("direct .md request keeps working", func(t *testing.T) {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about.md", http.NoBody)
-		rec := httptest.NewRecorder()
-		newHandler().ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, rec.Body.String(), "markdown source")
 	})
 
 	t.Run("a miss is answered in markdown, not a large HTML shell", func(t *testing.T) {
@@ -189,5 +180,90 @@ func TestServeHTTPMarkdownNegotiation(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 		assert.Contains(t, rec.Body.String(), "404")
 		assert.NotContains(t, rec.Header().Get("Content-Type"), "markdown")
+	})
+}
+
+// TestMarkdownContentTypeScope pins which responses get relabelled as markdown.
+//
+// The scope is deliberately narrow. A directly requested .md is not a
+// negotiated response and must keep the type it resolves to today: browsers
+// render text/plain inline but download text/markdown, so relabelling it would
+// turn every existing .md link on a site into a download prompt.
+func TestMarkdownContentTypeScope(t *testing.T) {
+	dir := setupNegotiationDir(t)
+	fs := file.NewLocalFileSystem(logging.NewMockLogger(logging.ERROR))
+
+	newHandler := func() *staticFileHandler {
+		return &staticFileHandler{
+			fs:               fs,
+			staticFilePath:   dir,
+			defaultExtension: ".html",
+			next:             http.NotFoundHandler(),
+		}
+	}
+
+	t.Run("direct .md keeps working and keeps its type", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about.md", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "markdown source")
+		assert.NotContains(t, rec.Header().Get("Content-Type"), "text/markdown",
+			"a direct .md must keep the type it has today")
+		assert.Empty(t, rec.Header().Get("Vary"), "a direct .md never negotiates")
+	})
+
+	// The same bytes reached two ways: only the negotiated route relabels them.
+	t.Run("the same file is text/markdown only when negotiated", func(t *testing.T) {
+		negotiated := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about", http.NoBody)
+		negotiated.Header.Set("Accept", "text/markdown")
+
+		negRec := httptest.NewRecorder()
+
+		newHandler().ServeHTTP(negRec, negotiated)
+
+		direct := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/about.md", http.NoBody)
+		dirRec := httptest.NewRecorder()
+
+		newHandler().ServeHTTP(dirRec, direct)
+
+		assert.Equal(t, negRec.Body.String(), dirRec.Body.String(), "same bytes either way")
+		assert.Contains(t, negRec.Header().Get("Content-Type"), "text/markdown")
+		assert.NotContains(t, dirRec.Header().Get("Content-Type"), "text/markdown")
+	})
+
+	// The root is served straight from index.html and never negotiates, so it
+	// must not advertise Vary either — it is usually the most-cached URL a site
+	// has, and fragmenting it on Accept buys nothing.
+	t.Run("the root never negotiates and never varies", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, rootPath, http.NoBody)
+		req.Header.Set("Accept", "text/markdown")
+
+		rec := httptest.NewRecorder()
+
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "<html>index</html>", "root is always index.html")
+		assert.Empty(t, rec.Header().Get("Vary"), "the root cannot vary by Accept")
+		assert.NotContains(t, rec.Header().Get("Content-Type"), "text/markdown")
+	})
+
+	// A miss answers in markdown whenever asked, whatever the path shape — so
+	// even a path that never negotiates on a hit must still advertise Vary, or
+	// a cache can hand an agent the HTML shell it stored for a browser.
+	t.Run("a miss advertises Vary even on an extensioned path", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/gone.html", http.NoBody)
+		req.Header.Set("Accept", "text/markdown")
+
+		rec := httptest.NewRecorder()
+
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Equal(t, "Accept", rec.Header().Get("Vary"))
+		assert.Contains(t, rec.Header().Get("Content-Type"), "text/markdown")
 	})
 }

@@ -207,13 +207,53 @@ func TestServeHTTPAppliesHeaderRules(t *testing.T) {
 		assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
 	})
 
-	// The rules must not be able to strip Vary and let a CDN cross-serve
-	// markdown to a browser.
-	t.Run("Vary: Accept survives", func(t *testing.T) {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/style.css", http.NoBody)
+	// ...but not its caching. A site's Cache-Control describes the pages it
+	// publishes; applying a page rule to a miss would pin a file that is merely
+	// not propagated yet into every cache downstream for the rule's lifetime.
+	//
+	// `/missing.html` is the path that proves it: it matches the `/*.html`
+	// block, so without the fix the 404 inherits max-age=300. An extensionless
+	// miss would not — it only matches `/*`, which declares no Cache-Control.
+	t.Run("a 404 does not inherit the site's Cache-Control", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/missing.html", http.NoBody)
 		rec := httptest.NewRecorder()
 		newHandler().ServeHTTP(rec, req)
 
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Empty(t, rec.Header().Get("Cache-Control"), "a miss must not be cacheable by a page rule")
+		assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"), "security headers still apply")
+
+		// The same rule really does apply on a hit — otherwise this proves nothing.
+		hit := httptest.NewRecorder()
+		hitReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/docs.html", http.NoBody)
+		newHandler().ServeHTTP(hit, hitReq)
+		assert.Equal(t, "public, max-age=300", hit.Header().Get("Cache-Control"),
+			"control: /*.html caches a page that exists")
+	})
+
+	// The rules must not be able to strip Vary and let a CDN cross-serve
+	// markdown to a browser.
+	t.Run("Vary: Accept survives on a negotiable route", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/docs", http.NoBody)
+		rec := httptest.NewRecorder()
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code, "control: /docs resolves to docs.html")
 		assert.Equal(t, "Accept", rec.Header().Get("Vary"))
+	})
+
+	// A hashed bundle can never resolve to markdown, so keying caches on Accept
+	// would fragment them for nothing — on exactly the responses the same
+	// _headers file marks immutable.
+	t.Run("no Vary on an immutable asset", func(t *testing.T) {
+		writeFile(t, dir, "_astro/app.DY-PF2h0.js", "console.log(1)")
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/_astro/app.DY-PF2h0.js", http.NoBody)
+		rec := httptest.NewRecorder()
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code, "control: the asset is really served")
+		assert.Contains(t, rec.Header().Get("Cache-Control"), "immutable", "control: the asset rule applies")
+		assert.Empty(t, rec.Header().Get("Vary"), "an unnegotiable asset must not fragment caches")
 	})
 }

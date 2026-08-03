@@ -18,9 +18,11 @@ func main() {
 	app := gofr.New()
 
 	// GetOrDefault only falls back when the key is absent, so a key present but
-	// empty — which the shipped configs/.env has for all four of these — yields
-	// an empty path rather than the default. That silently roots every lookup
-	// at the process working directory. Treat empty as unset.
+	// empty — which the shipped configs/.env has for all three settings below —
+	// yields an empty value rather than the default. For the path, that silently
+	// roots every lookup at the process working directory. Treat empty as unset.
+	// (SPA_MODE needs no guard: ParseBool rejects "" and leaves the same false
+	// the default would have produced.)
 	staticFilePath := app.Config.GetOrDefault("STATIC_DIR_PATH", defaultStaticFilePath)
 	if staticFilePath == "" {
 		staticFilePath = defaultStaticFilePath
