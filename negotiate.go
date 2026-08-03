@@ -2,6 +2,7 @@ package main
 
 import (
 	"mime"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,6 +37,27 @@ const (
 // on it, so the three cannot drift apart.
 func negotiable(urlPath string) bool {
 	return urlPath != rootPath && filepath.Ext(urlPath) == ""
+}
+
+// advertiseAcceptVaries records that this response depends on Accept, so that a
+// shared cache keys on it instead of handing one client's copy to another.
+//
+// Add rather than Set: a site's own `_headers` may declare a Vary of its own,
+// and Set would discard it. Repeated Vary field lines are combined by caches, so
+// a declared `Vary: Accept-Encoding` plus this one reads as
+// `Accept-Encoding, Accept` — which is exactly right. The only case worth
+// guarding is a site that already named Accept itself, where adding it again
+// would yield a pointless `Accept, Accept`.
+func advertiseAcceptVaries(header http.Header) {
+	for _, line := range header.Values("Vary") {
+		for _, field := range strings.Split(line, ",") {
+			if strings.EqualFold(strings.TrimSpace(field), "Accept") {
+				return
+			}
+		}
+	}
+
+	header.Add("Vary", "Accept")
 }
 
 // labelAsMarkdown reports whether this server should set an explicit markdown

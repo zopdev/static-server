@@ -309,3 +309,130 @@ func TestMarkdownContentTypeScope(t *testing.T) {
 		assert.Contains(t, rec.Header().Get("Content-Type"), "text/markdown")
 	})
 }
+
+// TestSPAFallbackAdvertisesVary covers the one shape where a single URL yields
+// two bodies without either being a negotiated hit: SPA mode, a `.md` on disk,
+// and no HTML page beside it. Markdown clients take the hit path and get the
+// markdown; browsers fall through to the shell. A cache that stored the shell
+// unkeyed would hand it to the next client that asked for markdown.
+func TestSPAFallbackAdvertisesVary(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "index.html", "<html>shell</html>")
+	writeFile(t, dir, "404.html", "<html>404</html>")
+	// Deliberately no foo.html and no foo/index.html.
+	writeFile(t, dir, "foo.md", "# Foo\n\nmarkdown only\n")
+
+	fs := file.NewLocalFileSystem(logging.NewMockLogger(logging.ERROR))
+
+	newHandler := func() *staticFileHandler {
+		return &staticFileHandler{
+			fs: fs, staticFilePath: dir, defaultExtension: ".html",
+			spaMode: true, next: http.NotFoundHandler(),
+		}
+	}
+
+	t.Run("the browser reaching the shell still gets Vary", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/foo", http.NoBody)
+		req.Header.Set("Accept", "text/html,*/*;q=0.8")
+
+		rec := httptest.NewRecorder()
+
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "shell", "control: this really is the SPA fallback")
+		assert.Equal(t, "Accept", rec.Header().Get("Vary"))
+	})
+
+	// The other half of the pair — proving the two responses really do differ,
+	// which is what makes the header above load-bearing.
+	t.Run("the agent gets markdown for the same URL", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/foo", http.NoBody)
+		req.Header.Set("Accept", "text/markdown")
+
+		rec := httptest.NewRecorder()
+
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "markdown only")
+		assert.Equal(t, "Accept", rec.Header().Get("Vary"))
+	})
+
+	// The root is not negotiable — it is served from index.html for every client
+	// alike — so it must not be keyed on Accept even in SPA mode, where it is the
+	// most-requested URL the site has.
+	t.Run("the root is not keyed on Accept", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, rootPath, http.NoBody)
+		req.Header.Set("Accept", "text/markdown")
+
+		rec := httptest.NewRecorder()
+
+		newHandler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "shell", "control: the root is served, not missed")
+		assert.Empty(t, rec.Header().Get("Vary"))
+	})
+}
+
+func TestAdvertiseAcceptVaries(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing []string
+		want     []string
+	}{
+		{"nothing declared", nil, []string{"Accept"}},
+
+		// A site's own Vary must survive: Set would discard it, and repeated
+		// field lines are combined by caches, so this reads as
+		// "Accept-Encoding, Accept".
+		{"site declared something else", []string{"Accept-Encoding"}, []string{"Accept-Encoding", "Accept"}},
+
+		// ...but naming Accept twice is pointless.
+		{"site already declared Accept", []string{"Accept"}, []string{"Accept"}},
+		{"site declared Accept in a list", []string{"Accept-Encoding, Accept"}, []string{"Accept-Encoding, Accept"}},
+		{"case-insensitive per RFC 9110", []string{"accept"}, []string{"accept"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			header := http.Header{}
+			for _, v := range tt.existing {
+				header.Add("Vary", v)
+			}
+
+			advertiseAcceptVaries(header)
+
+			assert.Equal(t, tt.want, header.Values("Vary"))
+		})
+	}
+}
+
+// TestSPAFallbackRootIsNeverKeyed pins the negotiable() guard on the SPA
+// fallback. That guard is only observable in one shape — SPA mode with no
+// index.html on disk, so the root itself reaches the fallback — because every
+// other path that gets there is extensionless and therefore negotiable. Without
+// the test the guard would be an unverified assertion rather than a checked one.
+func TestSPAFallbackRootIsNeverKeyed(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "404.html", "<html>404</html>")
+
+	fs := file.NewLocalFileSystem(logging.NewMockLogger(logging.ERROR))
+	h := &staticFileHandler{
+		fs: fs, staticFilePath: dir, defaultExtension: ".html",
+		spaMode: true, next: http.NotFoundHandler(),
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, rootPath, http.NoBody)
+	req.Header.Set("Accept", "text/markdown")
+
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	// The root is served from index.html for every client alike, so nothing
+	// about this response can depend on Accept — whether that file is there or,
+	// as here, missing.
+	assert.Empty(t, rec.Header().Get("Vary"))
+}

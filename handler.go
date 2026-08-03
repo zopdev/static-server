@@ -45,7 +45,17 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := h.fs.Stat(filePath); err != nil {
 		if h.spaMode && !hasExtension {
+			// The shell answers a route an agent may instead have been handed a
+			// .md sibling for: with `foo.md` on disk but no HTML page, markdown
+			// clients take the hit path above while browsers land here, so one
+			// URL yields two bodies. Saying so is what stops a shared cache
+			// handing the shell to the next client that asked for markdown.
+			if negotiable(r.URL.Path) {
+				advertiseAcceptVaries(w.Header())
+			}
+
 			http.ServeFile(w, r, filepath.Join(h.staticFilePath, indexHTML))
+
 			return
 		}
 
@@ -60,7 +70,7 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// those are exactly the hashed assets `_headers` marks immutable, so the
 	// cost would land on the responses this server most wants cached.
 	if negotiable(r.URL.Path) {
-		w.Header().Add("Vary", "Accept")
+		advertiseAcceptVaries(w.Header())
 	}
 
 	// http.ServeFile only sniffs a Content-Type when one is not already set,
@@ -78,7 +88,7 @@ func (h *staticFileHandler) serveNotFound(w http.ResponseWriter, r *http.Request
 	// A miss is answered in markdown whenever the client asked for it, so this
 	// response depends on Accept whatever the path looks like — including the
 	// extensions that never negotiate on a hit.
-	w.Header().Add("Vary", "Accept")
+	advertiseAcceptVaries(w.Header())
 
 	withdrawCacheDirectives(w.Header())
 

@@ -14,26 +14,39 @@ const indexHTML = "/index.html"
 const htmlExtension = ".html"
 const rootPath = "/"
 
+// configLookup is the slice of gofr's config this server reads. Declaring it
+// here lets the empty-value resolution below be exercised directly, rather than
+// only through a running app.
+type configLookup interface {
+	GetOrDefault(key, fallback string) string
+}
+
+// resolveOrDefault returns the configured value for key, falling back when the
+// key is absent *or* present but empty.
+//
+// gofr's GetOrDefault only covers absent. The shipped configs/.env sets these
+// keys with empty values, so a deployment supplying STATIC_DIR_PATH through the
+// environment would otherwise receive "" and silently root every lookup at the
+// process working directory — serving pages while loading zero `_headers` rules,
+// the kind of half-working state that never gets noticed.
+func resolveOrDefault(cfg configLookup, key, fallback string) string {
+	if value := cfg.GetOrDefault(key, fallback); value != "" {
+		return value
+	}
+
+	return fallback
+}
+
 func main() {
 	app := gofr.New()
 
-	// GetOrDefault only falls back when the key is absent, so a key present but
-	// empty — which the shipped configs/.env has for all three settings below —
-	// yields an empty value rather than the default. For the path, that silently
-	// roots every lookup at the process working directory. Treat empty as unset.
-	// (SPA_MODE needs no guard: ParseBool rejects "" and leaves the same false
-	// the default would have produced.)
-	staticFilePath := app.Config.GetOrDefault("STATIC_DIR_PATH", defaultStaticFilePath)
-	if staticFilePath == "" {
-		staticFilePath = defaultStaticFilePath
-	}
+	staticFilePath := resolveOrDefault(app.Config, "STATIC_DIR_PATH", defaultStaticFilePath)
 
+	// SPA_MODE needs no such guard: ParseBool rejects "" and leaves the same
+	// false the default would have produced.
 	spaMode, _ := strconv.ParseBool(app.Config.GetOrDefault("SPA_MODE", "false"))
 
-	defaultExtension := app.Config.GetOrDefault("DEFAULT_EXTENSION", htmlExtension)
-	if defaultExtension == "" {
-		defaultExtension = htmlExtension
-	}
+	defaultExtension := resolveOrDefault(app.Config, "DEFAULT_EXTENSION", htmlExtension)
 
 	handler := &staticFileHandler{
 		staticFilePath:   staticFilePath,
