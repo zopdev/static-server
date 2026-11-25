@@ -1,5 +1,7 @@
 # Build stage - runs on native platform, cross-compiles to target
-FROM --platform=$BUILDPLATFORM golang:1.26 AS build
+# Pinned to an exact patch release so a rebuild of the same tag uses the same
+# compiler and standard library (net/http included). Bump deliberately.
+FROM --platform=$BUILDPLATFORM golang:1.26.11 AS build
 
 WORKDIR /src
 

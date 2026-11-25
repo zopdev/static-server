@@ -41,23 +41,29 @@ func negotiable(urlPath string) bool {
 
 // advertiseAcceptVaries records that this response depends on Accept, so that a
 // shared cache keys on it instead of handing one client's copy to another.
+func advertiseAcceptVaries(header http.Header) {
+	advertiseVaries(header, "Accept")
+}
+
+// advertiseVaries records that this response depends on the named request
+// header.
 //
 // Add rather than Set: a site's own `_headers` may declare a Vary of its own,
 // and Set would discard it. Repeated Vary field lines are combined by caches, so
-// a declared `Vary: Accept-Encoding` plus this one reads as
+// a declared `Vary: Accept-Encoding` plus `Accept` reads as
 // `Accept-Encoding, Accept` — which is exactly right. The only case worth
-// guarding is a site that already named Accept itself, where adding it again
-// would yield a pointless `Accept, Accept`.
-func advertiseAcceptVaries(header http.Header) {
+// guarding is a field already named, where adding it again would yield a
+// pointless `Accept, Accept`.
+func advertiseVaries(header http.Header, field string) {
 	for _, line := range header.Values("Vary") {
-		for _, field := range strings.Split(line, ",") {
-			if strings.EqualFold(strings.TrimSpace(field), "Accept") {
+		for _, named := range strings.Split(line, ",") {
+			if strings.EqualFold(strings.TrimSpace(named), field) {
 				return
 			}
 		}
 	}
 
-	header.Add("Vary", "Accept")
+	header.Add("Vary", field)
 }
 
 // labelAsMarkdown reports whether this server should set an explicit markdown

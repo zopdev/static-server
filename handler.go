@@ -43,7 +43,8 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	filePath, hasExtension := h.resolveFilePath(r.URL.Path, wantsMarkdown)
 
-	if _, err := h.fs.Stat(filePath); err != nil {
+	info, err := h.fs.Stat(filePath)
+	if err != nil {
 		if h.spaMode && !hasExtension {
 			// The shell answers a route an agent may instead have been handed a
 			// .md sibling for: with `foo.md` on disk but no HTML page, markdown
@@ -78,6 +79,13 @@ func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// negotiated response.
 	if labelAsMarkdown(wantsMarkdown, r.URL.Path, filePath) {
 		w.Header().Set("Content-Type", markdownContentType)
+	}
+
+	// A precompressed sidecar answers in place of the file when the client
+	// accepts its encoding. Placed after every header above so `_headers` and
+	// the markdown label carry over to the encoded response unchanged.
+	if !info.IsDir() && h.servePrecompressed(w, r, filePath, info.ModTime()) {
+		return
 	}
 
 	http.ServeFile(w, r, filePath)
