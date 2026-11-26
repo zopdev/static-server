@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,3 +224,50 @@ type discardWriter struct{ header http.Header }
 func (d discardWriter) Header() http.Header       { clear(d.header); return d.header }
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 func (discardWriter) WriteHeader(int)             {}
+
+// TestRootPageIsCompressedForEveryRootSpelling: under a root of `.` or `./`,
+// resolveFilePath builds "./index.html" for "/" while the index key is
+// "index.html". Without cleaning the lookup, the home page was the one page
+// that silently never got its sidecar. Not parallel: it changes directory.
+func TestRootPageIsCompressedForEveryRootSpelling(t *testing.T) {
+	dir := setupTestDir(t)
+	writeFile(t, dir, "index.html.br", "br-index")
+	writeFile(t, dir, "blog/index.html", "<html>blog</html>")
+	writeFile(t, dir, "blog/index.html.br", "br-blog")
+	t.Chdir(dir)
+
+	for _, root := range []string{".", "./", dir, dir + "/"} {
+		h := newEncodingHandler(root)
+
+		for _, urlPath := range []string{"/", "/blog"} {
+			resolved, _ := h.resolveFilePath(urlPath, false)
+			assert.Contains(t, h.sidecars, filepath.Clean(resolved), "root %q, %s", root, urlPath)
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, urlPath, http.NoBody)
+			req.Header.Set("Accept-Encoding", "br")
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusOK, rec.Code, "root %q, %s", root, urlPath)
+			assert.Equal(t, "br", rec.Header().Get("Content-Encoding"), "root %q, %s", root, urlPath)
+		}
+	}
+}
+
+// TestLoadSiteWiresHeadersAndSidecars: each loader has its own tests, but
+// only this proves the startup hook hands their results to the handler.
+func TestLoadSiteWiresHeadersAndSidecars(t *testing.T) {
+	dir := setupTestDir(t)
+	writeFile(t, dir, headersFileName, realHeadersFile)
+	writeFile(t, dir, "style.css.br", "br")
+
+	fs := file.NewLocalFileSystem(logging.NewMockLogger(logging.ERROR))
+	h := &staticFileHandler{staticFilePath: dir, defaultExtension: ".html", next: http.NotFoundHandler()}
+
+	h.loadSite(fs, logging.NewMockLogger(logging.ERROR))
+
+	assert.Equal(t, fs, h.fs)
+	assert.NotEmpty(t, h.headerRules, "_headers rules")
+	assert.Contains(t, h.sidecars, filepath.Join(dir, "style.css"), "sidecar index")
+}

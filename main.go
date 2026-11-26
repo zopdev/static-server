@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"gofr.dev/pkg/gofr"
+	"gofr.dev/pkg/gofr/datasource/file"
+	"gofr.dev/pkg/gofr/logging"
 
 	"zop.dev/static-server/internal/config"
 )
@@ -56,34 +58,11 @@ func main() {
 	}
 
 	app.OnStart(func(ctx *gofr.Context) error {
-		handler.fs = ctx.File
-
 		if err := config.HydrateFile(ctx.File, app.Config); err != nil {
 			ctx.Logger.Error(err.Error())
 		}
 
-		// Read once at startup rather than per request. Absent file → no rules
-		// → responses are byte-for-byte what they are today.
-		handler.headerRules = loadHeaderRules(ctx.File, staticFilePath)
-		// The resolved directory is logged with the count: "0 rules" is normal
-		// for a site without the file, but indistinguishable from a misrooted
-		// path unless the path is on the line too.
-		ctx.Logger.Infof("loaded %d %s rule(s) from %s", len(handler.headerRules), headersFileName, staticFilePath)
-
-		// Sidecars are indexed once, here, so a request never probes the disk
-		// for them. A partial failure keeps what was indexed; startup never
-		// fails on it (gofr exits the app when an OnStart hook errors), since
-		// an empty index only means plain files, exactly as before.
-		started := time.Now()
-
-		sidecars, err := buildSidecarIndex(ctx.File, staticFilePath)
-		if err != nil {
-			ctx.Logger.Errorf("indexing precompressed sidecars under %s: %v", staticFilePath, err)
-		}
-
-		handler.sidecars = sidecars
-		ctx.Logger.Infof("indexed %d precompressed sidecar(s) in %s from %s",
-			sidecars.size(), time.Since(started).Round(time.Millisecond), staticFilePath)
+		handler.loadSite(ctx.File, ctx.Logger)
 
 		return nil
 	})
@@ -96,4 +75,35 @@ func main() {
 	app.AddStaticFiles("/", staticFilePath)
 
 	app.Run()
+}
+
+// loadSite does the per-site work that happens once at startup: it points the
+// handler at fs, reads the `_headers` rules, and indexes precompressed
+// sidecars. It lives outside the OnStart closure so a test can prove the
+// handler is actually wired with both, not only that each loader works.
+func (h *staticFileHandler) loadSite(fs file.FileSystem, logger logging.Logger) {
+	h.fs = fs
+
+	// Read once at startup rather than per request. Absent file → no rules
+	// → responses are byte-for-byte what they are today.
+	h.headerRules = loadHeaderRules(fs, h.staticFilePath)
+	// The resolved directory is logged with the count: "0 rules" is normal
+	// for a site without the file, but indistinguishable from a misrooted
+	// path unless the path is on the line too.
+	logger.Infof("loaded %d %s rule(s) from %s", len(h.headerRules), headersFileName, h.staticFilePath)
+
+	// Sidecars are indexed once, here, so a request never probes the disk
+	// for them. A partial failure keeps what was indexed; startup never
+	// fails on it (gofr exits the app when an OnStart hook errors), since
+	// an empty index only means plain files, exactly as before.
+	started := time.Now()
+
+	sidecars, err := buildSidecarIndex(fs, h.staticFilePath)
+	if err != nil {
+		logger.Errorf("indexing precompressed sidecars under %s: %v", h.staticFilePath, err)
+	}
+
+	h.sidecars = sidecars
+	logger.Infof("indexed %d precompressed sidecar(s) in %s from %s",
+		sidecars.size(), time.Since(started).Round(time.Millisecond), h.staticFilePath)
 }

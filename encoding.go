@@ -166,10 +166,13 @@ type sidecar struct {
 	path string
 }
 
-// sidecarIndex maps the path of a file (exactly as resolveFilePath builds it)
-// to the precompressed variants found next to it, in preference order. It is
-// built once at startup, so serving a request costs a map lookup and not a
-// filesystem probe per encoding: a site that ships no sidecars pays nothing.
+// sidecarIndex maps the cleaned path of a file to the precompressed variants
+// found next to it, in preference order. Lookups clean the path first:
+// under a root of `.`, `./` or `/`, resolveFilePath builds "./index.html" or
+// "//index.html" for "/", which the index holds as "index.html" and
+// "/index.html". It is built once at startup, so serving a request costs a
+// map lookup and not a filesystem probe per encoding: a site that ships no
+// sidecars pays nothing.
 type sidecarIndex map[string][]precompressed
 
 // wellKnownDir is never indexed: every /.well-known/ request is delegated
@@ -240,7 +243,7 @@ func (s sidecarIndex) size() int { return len(s) }
 // findSidecars reports which precompressed variants exist for filePath, in
 // preference order, from the startup index. It touches no filesystem.
 func (h *staticFileHandler) findSidecars(filePath string) []sidecar {
-	encs := h.sidecars[filePath]
+	encs := h.sidecars[filepath.Clean(filePath)]
 	if len(encs) == 0 {
 		return nil
 	}
