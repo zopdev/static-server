@@ -66,6 +66,7 @@ When the build ships a compressed copy of a file next to it — `app.js.br` (Bro
 
 | Behavior | Detail |
 |---|---|
+| Discovery | Sidecars are **indexed once at startup** (logged as `indexed N precompressed sidecar(s) in …`), so a request costs a map lookup and never probes the disk for `.br` / `.gz`. Files added while the server runs are picked up on the next restart; a sidecar deleted while it runs falls back to the original. `/.well-known/` is not indexed, and symlinked directories are not followed. A directory that cannot be read is logged and skipped — startup never fails on it. |
 | Preference | **Brotli wins over gzip whenever the client accepts both, whatever q-values it sends.** q-values decide only whether a coding is acceptable, not which acceptable one is chosen. A gzip sidecar is used when br is not acceptable or has no sidecar. |
 | `Accept-Encoding` parsing | Case-insensitive, whitespace-tolerant, repeated header lines combined. `q=0` refuses a coding; `*` covers codings not named; a named coding overrides `*`. A malformed weight (`q=abc`, `q=2`) makes that coding **not acceptable**, and if a coding is both accepted and refused in one request, the refusal wins. Nothing is ever answered with 406: the fallback is always the original file. |
 | `Content-Type` | Taken from the **original** file, never the sidecar: by extension, or by sniffing the original's bytes where the MIME table has no entry (as for `.md` on the distroless image). A `Content-Type` from `_headers`, or the negotiated markdown type, still wins. |

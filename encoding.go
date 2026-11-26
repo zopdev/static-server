@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gofr.dev/pkg/gofr/datasource/file"
 )
 
 const (
@@ -164,18 +166,87 @@ type sidecar struct {
 	path string
 }
 
-// findSidecars reports which precompressed variants exist for filePath, in
-// preference order. A sidecar is only ever looked for next to a file that was
-// already found, so an orphan `x.br` with no `x` can never answer `/x`.
-func (h *staticFileHandler) findSidecars(filePath string) []sidecar {
-	var found []sidecar
+// sidecarIndex maps the path of a file (exactly as resolveFilePath builds it)
+// to the precompressed variants found next to it, in preference order. It is
+// built once at startup, so serving a request costs a map lookup and not a
+// filesystem probe per encoding: a site that ships no sidecars pays nothing.
+type sidecarIndex map[string][]precompressed
 
-	for _, enc := range sidecarEncodings() {
-		info, err := h.fs.Stat(filePath + enc.suffix)
-		if err != nil || info.IsDir() {
+// wellKnownDir is never indexed: every /.well-known/ request is delegated
+// untouched (handler.go), so a sidecar there could never be served.
+const wellKnownDir = ".well-known"
+
+// buildSidecarIndex walks root once through fs and records, for every file,
+// which of its sidecars exist alongside it. An orphan `x.br` with no `x` is
+// not recorded, so it can never answer `/x`. Symlinked directories are not
+// followed (gofr's ReadDir reports them as files).
+//
+// It never fails the caller: a directory that cannot be read is skipped and
+// reported in the returned error, and whatever was indexed is still returned.
+// An empty index means every response is the plain file, as before.
+func buildSidecarIndex(fs file.FileSystem, root string) (sidecarIndex, error) {
+	index := sidecarIndex{}
+
+	var errs []error
+
+	pending := []string{root}
+
+	for len(pending) > 0 {
+		dir := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+
+		entries, err := fs.ReadDir(dir)
+		if err != nil {
+			errs = append(errs, err)
+
 			continue
 		}
 
+		names := make(map[string]struct{}, len(entries))
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				if entry.Name() != wellKnownDir {
+					pending = append(pending, filepath.Join(dir, entry.Name()))
+				}
+
+				continue
+			}
+
+			names[entry.Name()] = struct{}{}
+		}
+
+		for name := range names {
+			var found []precompressed
+
+			for _, enc := range sidecarEncodings() {
+				if _, ok := names[name+enc.suffix]; ok {
+					found = append(found, enc)
+				}
+			}
+
+			if len(found) > 0 {
+				index[filepath.Join(dir, name)] = found
+			}
+		}
+	}
+
+	return index, errors.Join(errs...)
+}
+
+// size reports how many files have at least one sidecar.
+func (s sidecarIndex) size() int { return len(s) }
+
+// findSidecars reports which precompressed variants exist for filePath, in
+// preference order, from the startup index. It touches no filesystem.
+func (h *staticFileHandler) findSidecars(filePath string) []sidecar {
+	encs := h.sidecars[filePath]
+	if len(encs) == 0 {
+		return nil
+	}
+
+	found := make([]sidecar, 0, len(encs))
+	for _, enc := range encs {
 		found = append(found, sidecar{precompressed: enc, path: filePath + enc.suffix})
 	}
 

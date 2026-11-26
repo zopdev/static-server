@@ -187,7 +187,17 @@ func newEncodingHandler(dir string) *staticFileHandler {
 		defaultExtension: ".html",
 		next:             http.NotFoundHandler(),
 		headerRules:      loadHeaderRules(fs, dir),
+		sidecars:         mustIndex(fs, dir),
 	}
+}
+
+func mustIndex(fs file.FileSystem, dir string) sidecarIndex {
+	index, err := buildSidecarIndex(fs, dir)
+	if err != nil {
+		panic(err)
+	}
+
+	return index
 }
 
 func serve(t *testing.T, h http.Handler, method, target string, header map[string]string) *httptest.ResponseRecorder {

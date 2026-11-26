@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"gofr.dev/pkg/gofr"
 
@@ -68,6 +69,21 @@ func main() {
 		// for a site without the file, but indistinguishable from a misrooted
 		// path unless the path is on the line too.
 		ctx.Logger.Infof("loaded %d %s rule(s) from %s", len(handler.headerRules), headersFileName, staticFilePath)
+
+		// Sidecars are indexed once, here, so a request never probes the disk
+		// for them. A partial failure keeps what was indexed; startup never
+		// fails on it (gofr exits the app when an OnStart hook errors), since
+		// an empty index only means plain files, exactly as before.
+		started := time.Now()
+
+		sidecars, err := buildSidecarIndex(ctx.File, staticFilePath)
+		if err != nil {
+			ctx.Logger.Errorf("indexing precompressed sidecars under %s: %v", staticFilePath, err)
+		}
+
+		handler.sidecars = sidecars
+		ctx.Logger.Infof("indexed %d precompressed sidecar(s) in %s from %s",
+			sidecars.size(), time.Since(started).Round(time.Millisecond), staticFilePath)
 
 		return nil
 	})
